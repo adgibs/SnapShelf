@@ -44,6 +44,36 @@ public enum Tool: String, CaseIterable, Identifiable {
     var isPath: Bool { self == .freehand || self == .highlighter }
 }
 
+/// A background placed behind the capture, with padding, rounded corners and a shadow.
+public enum Backdrop: String, CaseIterable, Identifiable {
+    case none, ocean, sunset, mint, graphite, white
+
+    public var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .none: return "No background"
+        case .ocean: return "Ocean"
+        case .sunset: return "Sunset"
+        case .mint: return "Mint"
+        case .graphite: return "Graphite"
+        case .white: return "White"
+        }
+    }
+
+    var colors: [NSColor] {
+        func c(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: 1) }
+        switch self {
+        case .none: return []
+        case .ocean: return [c(0.20, 0.30, 0.78), c(0.33, 0.72, 0.93)]
+        case .sunset: return [c(0.96, 0.42, 0.42), c(0.99, 0.76, 0.40)]
+        case .mint: return [c(0.14, 0.62, 0.60), c(0.62, 0.92, 0.70)]
+        case .graphite: return [c(0.13, 0.14, 0.17), c(0.33, 0.35, 0.40)]
+        case .white: return [c(1, 1, 1), c(0.94, 0.95, 0.97)]
+        }
+    }
+}
+
 /// One editable object. All geometry is in image pixels with the origin at the top-left.
 struct Annotation: Identifiable, Equatable {
     var id = UUID()
@@ -130,6 +160,28 @@ final class EditorModel: ObservableObject {
     @Published private(set) var annotations: [Annotation] = [] { didSet { onChange?() } }
     @Published private(set) var crop: CGRect? { didSet { onChange?() } }
     @Published var selectedID: UUID? { didSet { onChange?() } }
+    @Published var backdrop: Backdrop = .none { didSet { onChange?() } }
+    /// Padding as a fraction of the capture's longer side.
+    @Published var paddingFraction: CGFloat = 0.08 { didSet { onChange?() } }
+
+    /// Padding in image pixels around a capture of `size`; zero without a background.
+    func padding(for size: CGSize) -> CGFloat {
+        backdrop == .none ? 0 : (max(size.width, size.height) * paddingFraction).rounded()
+    }
+
+    func cornerRadius(for size: CGSize) -> CGFloat {
+        min(14 * scale, min(size.width, size.height) * 0.06)
+    }
+
+    /// Fills `rect` with the background gradient. Works in flipped or unflipped contexts.
+    func drawBackdrop(in rect: CGRect, context ctx: CGContext) {
+        let cg = backdrop.colors.map(\.cgColor) as CFArray
+        guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: cg, locations: nil) else { return }
+        ctx.saveGState()
+        ctx.clip(to: rect)
+        ctx.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.minY), end: CGPoint(x: rect.maxX, y: rect.maxY), options: [])
+        ctx.restoreGState()
+    }
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
 
@@ -350,7 +402,34 @@ final class EditorModel: ObservableObject {
         ctx.scaleBy(x: 1, y: -1)
         draw(in: ctx)
         guard let full = ctx.makeImage() else { return nil }
-        if let crop, crop.width >= 1, crop.height >= 1 { return full.cropping(to: crop) }
-        return full
+        var output = full
+        if let crop, crop.width >= 1, crop.height >= 1, let cropped = full.cropping(to: crop) { output = cropped }
+        return backdrop == .none ? output : framed(output)
+    }
+
+    /// Places `content` on the background with padding, rounded corners and a soft shadow.
+    private func framed(_ content: CGImage) -> CGImage? {
+        let size = CGSize(width: content.width, height: content.height)
+        let pad = padding(for: size)
+        let canvas = CGSize(width: size.width + pad * 2, height: size.height + pad * 2)
+        guard let ctx = CGContext(
+            data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        drawBackdrop(in: CGRect(origin: .zero, size: canvas), context: ctx)
+        let rect = CGRect(x: pad, y: pad, width: size.width, height: size.height)
+        let shape = CGPath(roundedRect: rect, cornerWidth: cornerRadius(for: size), cornerHeight: cornerRadius(for: size), transform: nil)
+        if pad > 0 {
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: -pad * 0.12), blur: pad * 0.45, color: CGColor(gray: 0, alpha: 0.35))
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.addPath(shape)
+            ctx.fillPath()
+            ctx.restoreGState()
+        }
+        ctx.addPath(shape)
+        ctx.clip()
+        ctx.draw(content, in: rect)
+        return ctx.makeImage()
     }
 }

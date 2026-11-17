@@ -57,6 +57,17 @@ enum HUD {
         ])
     }
 
+    /// Shows a message until `hide()` or the next toast.
+    static func show(_ message: String) {
+        hideWork?.cancel()
+        present(message)
+    }
+
+    static func hide() {
+        hideWork?.cancel()
+        panel?.orderOut(nil)
+    }
+
     static func toast(_ message: String, seconds: Double = 1.8) {
         hideWork?.cancel()
         present(message)

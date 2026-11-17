@@ -58,6 +58,29 @@ public final class HistoryStore: ObservableObject {
         )
     }
 
+    /// Moves a finished recording (MP4 or GIF) into history, with `poster` as its thumbnail.
+    public func importFile(at source: URL, poster: CGImage, pixelWidth: Int, pixelHeight: Int, scale: CGFloat, mode: String, pattern: String, date: Date = Date()) throws -> CaptureItem {
+        let id = UUID()
+        let folder = directory.appendingPathComponent(id.uuidString, isDirectory: true)
+        let thumbFolder = folder.appendingPathComponent(".thumb", isDirectory: true)
+        try fileManager.createDirectory(at: thumbFolder, withIntermediateDirectories: true)
+        let base = FileNamer.baseName(pattern: pattern, date: date, mode: mode, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+        let fileURL = folder.appendingPathComponent("\(base).\(source.pathExtension)")
+        let thumbURL = thumbFolder.appendingPathComponent("thumb.png")
+        do {
+            try fileManager.moveItem(at: source, to: fileURL)
+            let thumb = ImageCodec.thumbnail(of: poster, maxPixel: HistoryStore.thumbnailMaxPixel) ?? poster
+            try ImageCodec.write(thumb, to: thumbURL, format: .png)
+        } catch {
+            try? fileManager.removeItem(at: folder)
+            throw error
+        }
+        return CaptureItem(
+            id: id, date: date, mode: mode, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+            scale: Double(scale), fileURL: fileURL, thumbnailURL: thumbURL
+        )
+    }
+
     /// Adds a written capture to the front of history and prunes anything past the limit.
     public func insert(_ item: CaptureItem) {
         var updated = items
@@ -86,6 +109,21 @@ public final class HistoryStore: ObservableObject {
         try? fileManager.removeItem(at: folderURL(for: item))
         items.removeAll { $0.id == item.id }
         persist()
+    }
+
+    /// Deletes captures older than `days` days, except any still in use. 0 or less does nothing.
+    /// Returns how many were removed.
+    @discardableResult
+    public func removeExpired(days: Int, now: Date = Date()) -> Int {
+        guard days > 0 else { return 0 }
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+        let expired = items.filter { $0.date < cutoff && isInUse?($0.id) != true }
+        guard !expired.isEmpty else { return 0 }
+        for item in expired { try? fileManager.removeItem(at: folderURL(for: item)) }
+        let ids = Set(expired.map(\.id))
+        items.removeAll { ids.contains($0.id) }
+        persist()
+        return expired.count
     }
 
     public func clear() {

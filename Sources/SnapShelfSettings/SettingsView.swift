@@ -144,6 +144,10 @@ public struct SettingsView: View {
                     Text("10 seconds").tag(10)
                 }
                 Toggle("Hide desktop icons while capturing", isOn: $settings.hideDesktopIcons)
+                Picker("Record screen as", selection: $settings.recordingFormat) {
+                    ForEach(RecordingFormat.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
             }
 
             Section("Quick access overlay") {
@@ -161,6 +165,24 @@ public struct SettingsView: View {
                     Stepper(value: $settings.autoDismissSeconds, in: 1...600) {
                         Text("Dismiss after \(settings.autoDismissSeconds) seconds")
                     }
+                }
+            }
+
+            Section("History") {
+                Picker("Keep captures", selection: Binding(
+                    get: { settings.historyExpiryDays > 0 },
+                    set: { settings.historyExpiryDays = $0 ? 7 : 0 }
+                )) {
+                    Text("Until 20 newer ones replace them").tag(false)
+                    Text("For a number of days").tag(true)
+                }
+                if settings.historyExpiryDays > 0 {
+                    Stepper(value: $settings.historyExpiryDays, in: 1...365) {
+                        Text(settings.historyExpiryDays == 1 ? "Delete after 1 day" : "Delete after \(settings.historyExpiryDays) days")
+                    }
+                    Text("Older captures are deleted from history straight away. Files in your save folder are not touched.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 

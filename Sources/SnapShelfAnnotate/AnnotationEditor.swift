@@ -74,6 +74,20 @@ struct EditorToolbar: View {
                 .help("Line width and text size")
                 .accessibilityLabel("Line width")
 
+            Picker("Background", selection: $model.backdrop) {
+                ForEach(Backdrop.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("Background and padding")
+            .accessibilityLabel("Background")
+            if model.backdrop != .none {
+                Slider(value: $model.paddingFraction, in: 0.02...0.25)
+                    .frame(width: 70)
+                    .help("Padding")
+                    .accessibilityLabel("Padding")
+            }
+
             Spacer(minLength: 8)
 
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
@@ -127,7 +141,7 @@ public final class AnnotationEditor: NSObject, NSWindowDelegate {
         let screen = NSScreen.underMouse.visibleFrame
         let pointSize = CGSize(width: CGFloat(image.width) / model.scale, height: CGFloat(image.height) / model.scale)
         let size = CGSize(
-            width: min(max(pointSize.width + 32, 860), screen.width * 0.9),
+            width: min(max(pointSize.width + 32, 1060), screen.width * 0.9),
             height: min(max(pointSize.height + 32 + 44, 480), screen.height * 0.9)
         )
         window = NSWindow(
@@ -158,7 +172,7 @@ public final class AnnotationEditor: NSObject, NSWindowDelegate {
         ])
         window.contentView = container
         window.title = "Annotate — \(item.baseName)"
-        window.minSize = CGSize(width: 860, height: 360)
+        window.minSize = CGSize(width: 1060, height: 360)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()

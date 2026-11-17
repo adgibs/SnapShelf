@@ -205,6 +205,46 @@ final class HistoryHousekeepingTests: XCTestCase {
     }
 }
 
+final class HistoryExpiryTests: XCTestCase {
+    func testRemovesOnlyCapturesOlderThanTheLimit() throws {
+        let store = HistoryStore(directory: tempDirectory())
+        let now = Date()
+        let day = 86_400.0
+        let old = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "old", date: now.addingTimeInterval(-8 * day))
+        let recent = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "recent", date: now.addingTimeInterval(-6 * day))
+
+        XCTAssertEqual(store.removeExpired(days: 0, now: now), 0, "0 means never expire")
+        XCTAssertEqual(store.items.count, 2)
+
+        XCTAssertEqual(store.removeExpired(days: 7, now: now), 1)
+        XCTAssertEqual(store.items, [recent])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.fileURL.deletingLastPathComponent().path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recent.fileURL.path))
+        XCTAssertEqual(HistoryStore(directory: store.directory).items, [recent], "the removal is persisted")
+    }
+
+    func testExpiryLeavesCapturesInUse() throws {
+        let store = HistoryStore(directory: tempDirectory())
+        let now = Date()
+        let onShelf = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "shelf", date: now.addingTimeInterval(-30 * 86_400))
+        store.isInUse = { $0 == onShelf.id }
+        XCTAssertEqual(store.removeExpired(days: 1, now: now), 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: onShelf.fileURL.path))
+        store.isInUse = nil
+        XCTAssertEqual(store.removeExpired(days: 1, now: now), 1)
+        XCTAssertTrue(store.items.isEmpty)
+    }
+
+    func testExpirySettingDefaultsToNeverAndPersists() {
+        let name = "SnapShelfTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        XCTAssertEqual(AppSettings(defaults: defaults).historyExpiryDays, 0)
+        AppSettings(defaults: defaults).historyExpiryDays = 14
+        XCTAssertEqual(AppSettings(defaults: defaults).historyExpiryDays, 14)
+        defaults.removePersistentDomain(forName: name)
+    }
+}
+
 final class SaveExporterTests: XCTestCase {
     func testSavesPNGAndJPEGWithUniqueNames() throws {
         let store = HistoryStore(directory: tempDirectory())
@@ -285,6 +325,7 @@ final class DragPayloadTests: XCTestCase {
 }
 
 @testable import SnapShelfAnnotate
+import SnapShelfCapture
 
 final class AnnotationTests: XCTestCase {
     func testRenderKeepsPixelSizeAndAppliesCrop() throws {
@@ -344,5 +385,145 @@ final class AnnotationTests: XCTestCase {
         let rect = Annotation(tool: .rectangle, start: .zero, end: CGPoint(x: 100, y: 100), color: .red, width: 2)
         XCTAssertTrue(rect.hitTest(CGPoint(x: 0, y: 50), tolerance: 4))
         XCTAssertFalse(rect.hitTest(CGPoint(x: 50, y: 50), tolerance: 4))
+    }
+}
+
+final class BackdropTests: XCTestCase {
+    func testBackgroundAddsPaddingAroundTheCapture() throws {
+        let model = EditorModel(image: makeImage(width: 400, height: 200, alpha: false), scale: 1)
+        model.backdrop = .ocean
+        model.paddingFraction = 0.1
+        let out = try XCTUnwrap(model.render())
+        XCTAssertEqual([out.width, out.height], [400 + 80, 200 + 80])
+        model.setCrop(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let cropped = try XCTUnwrap(model.render())
+        XCTAssertEqual([cropped.width, cropped.height], [120, 120], "padding follows the cropped size")
+        model.backdrop = .none
+        XCTAssertEqual(try XCTUnwrap(model.render()).width, 100)
+    }
+
+    /// Set SNAPSHELF_DUMP to a folder to write a sample for a visual check.
+    func testDumpSampleForVisualCheck() throws {
+        guard let folder = ProcessInfo.processInfo.environment["SNAPSHELF_DUMP"] else { return }
+        let model = EditorModel(image: makeImage(width: 600, height: 380, alpha: false), scale: 2)
+        model.add(Annotation(tool: .arrow, start: CGPoint(x: 80, y: 300), end: CGPoint(x: 300, y: 120), color: .systemRed, width: 8))
+        model.add(Annotation(tool: .step, start: CGPoint(x: 420, y: 120), end: .zero, color: .systemRed, width: 8, number: 1))
+        model.add(Annotation(tool: .text, start: CGPoint(x: 330, y: 220), end: .zero, color: .black, width: 6, text: "Padding"))
+        model.backdrop = .sunset
+        let image = try XCTUnwrap(model.render())
+        try ImageCodec.write(image, to: URL(fileURLWithPath: folder).appendingPathComponent("backdrop.png"), format: .png)
+    }
+}
+
+final class ScrollStitcherTests: XCTestCase {
+    /// A tall page where every row is different, so each offset has exactly one match.
+    func makePage(width: Int, height: Int, stickyHeader: Int = 0) -> (page: CGImage, frame: (Int, Int) -> CGImage) {
+        var generator = SystemRandomNumberGenerator()
+        var bytes = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            for block in 0..<(width / 8) {
+                let v = UInt8.random(in: 0...255, using: &generator)
+                for x in (block * 8)..<(block * 8 + 8) {
+                    let i = (y * width + x) * 4
+                    bytes[i] = v; bytes[i + 1] = v; bytes[i + 2] = v
+                }
+            }
+        }
+        func image(_ data: [UInt8], _ h: Int) -> CGImage {
+            CGImage(width: width, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                    space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                    provider: CGDataProvider(data: Data(data) as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        }
+        let frame: (Int, Int) -> CGImage = { offset, frameHeight in
+            var rows = Array(bytes[(offset * width * 4)..<((offset + frameHeight) * width * 4)])
+            // A header that stays put while the page moves under it.
+            for i in 0..<(stickyHeader * width * 4) { rows[i] = 40 }
+            return image(rows, frameHeight)
+        }
+        return (image(bytes, height), frame)
+    }
+
+    func pixels(_ image: CGImage) -> Data { image.dataProvider!.data! as Data }
+
+    func testStitchesScrolledFramesIntoThePage() throws {
+        let (page, frame) = makePage(width: 240, height: 1000)
+        let stitcher = ScrollStitcher()
+        for offset in [0, 0, 37, 120, 121, 300, 455, 600] { stitcher.add(frame(offset, 400)) }
+        let result = try XCTUnwrap(stitcher.result())
+        XCTAssertEqual(result.width, 240)
+        XCTAssertEqual(result.height, 1000)
+        XCTAssertEqual(stitcher.missedFrames, 0)
+        XCTAssertEqual(pixels(result), pixels(page))
+    }
+
+    func testCopesWithAStickyHeaderAndSkipsFramesItCannotPlace() throws {
+        let (_, frame) = makePage(width: 240, height: 2000, stickyHeader: 40)
+        let stitcher = ScrollStitcher()
+        stitcher.add(frame(0, 400))
+        XCTAssertEqual(stitcher.add(frame(150, 400)), 150)
+        // Jumped a whole screen: nothing overlaps, so the frame is skipped, not glued on.
+        XCTAssertEqual(stitcher.add(frame(1200, 400)), 0)
+        XCTAssertEqual(stitcher.missedFrames, 1)
+        XCTAssertEqual(stitcher.add(frame(260, 400)), 110)
+        XCTAssertEqual(stitcher.height, 660)
+    }
+
+    /// Lines of text: the same 13-pixel pattern over and over, differing only in a small "line number".
+    func testRepeatingLinesAreNotConfusedWithEachOther() throws {
+        let width = 240, pitch = 13, lines = 150
+        let height = lines * pitch
+        var bytes = [UInt8](repeating: 30, count: width * height * 4)
+        func set(_ x: Int, _ y: Int, _ v: UInt8) {
+            let i = (y * width + x) * 4
+            bytes[i] = v; bytes[i + 1] = v; bytes[i + 2] = v
+        }
+        for line in 0..<lines {
+            for row in 2..<10 {
+                let y = line * pitch + row
+                for x in stride(from: 40, to: 220, by: 3) { set(x, y, 230) }       // identical "words"
+                for bit in 0..<8 where (line >> bit) & 1 == 1 { set(8 + bit * 2, y, 230) } // the number
+            }
+        }
+        func frame(_ offset: Int) -> CGImage {
+            let rows = Data(bytes[(offset * width * 4)..<((offset + 390) * width * 4)])
+            return CGImage(width: width, height: 390, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                           space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                           provider: CGDataProvider(data: rows as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        }
+        let stitcher = ScrollStitcher()
+        // Shifts that are multiples of the pitch, and some that are not.
+        for offset in [0, 130, 260, 300, 533, 800, 1040, 1300] { stitcher.add(frame(offset)) }
+        XCTAssertEqual(stitcher.missedFrames, 0)
+        let result = try XCTUnwrap(stitcher.result())
+        XCTAssertEqual(result.height, 1690)
+        XCTAssertEqual(pixels(result), Data(bytes[0..<(1690 * width * 4)]))
+    }
+
+    func testStopsAtTheHeightLimit() {
+        let (_, frame) = makePage(width: 240, height: 1000)
+        let stitcher = ScrollStitcher(maxHeight: 500)
+        stitcher.add(frame(0, 400))
+        stitcher.add(frame(200, 400))
+        XCTAssertEqual(stitcher.height, 500)
+        XCTAssertTrue(stitcher.isFull)
+    }
+}
+
+final class RecordingFileTests: XCTestCase {
+    func testRecordingsMoveIntoHistoryAndSaveUnchanged() throws {
+        let store = HistoryStore(directory: tempDirectory())
+        let source = tempDirectory().appendingPathComponent("clip.mp4")
+        try Data("not really a movie".utf8).write(to: source)
+        let item = try store.importFile(at: source, poster: makeImage(width: 800, height: 600), pixelWidth: 800, pixelHeight: 600, scale: 2, mode: "recording", pattern: "Clip")
+        store.insert(item)
+        XCTAssertEqual(item.fileURL.lastPathComponent, "Clip.mp4")
+        XCTAssertFalse(item.isStillImage)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path), "moved, not copied")
+        XCTAssertEqual(ImageCodec.pixelSize(of: item.thumbnailURL), CGSize(width: 480, height: 360))
+        XCTAssertEqual(HistoryStore(directory: store.directory).items, [item])
+
+        let saved = try SaveExporter.save(item, to: tempDirectory(), format: .jpeg)
+        XCTAssertEqual(saved.lastPathComponent, "Clip.mp4", "the still-image format setting does not apply")
+        XCTAssertEqual(try Data(contentsOf: saved), try Data(contentsOf: item.fileURL))
     }
 }

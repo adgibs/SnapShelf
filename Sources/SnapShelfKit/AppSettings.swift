@@ -1,6 +1,12 @@
 import Combine
 import Foundation
 
+public enum RecordingFormat: String, CaseIterable, Identifiable {
+    case mp4, gif
+    public var id: String { rawValue }
+    public var title: String { self == .mp4 ? "MP4" : "GIF" }
+}
+
 public enum OverlayCorner: String, CaseIterable, Identifiable {
     case bottomLeft, bottomRight
     public var id: String { rawValue }
@@ -25,6 +31,8 @@ public final class AppSettings: ObservableObject {
         static let hotkeys = "hotkeys"
         static let timer = "selfTimerSeconds"
         static let hideIcons = "hideDesktopIcons"
+        static let expiry = "historyExpiryDays"
+        static let recording = "recordingFormat"
     }
 
     public static let defaultSaveFolderPath = "~/Pictures/SnapShelf"
@@ -44,6 +52,11 @@ public final class AppSettings: ObservableObject {
     @Published public var selfTimerSeconds: Int { didSet { defaults.set(selfTimerSeconds, forKey: Key.timer) } }
     @Published public var hideDesktopIcons: Bool { didSet { defaults.set(hideDesktopIcons, forKey: Key.hideIcons) } }
 
+    /// Captures older than this many days are deleted from history. 0 means keep until pushed out.
+    @Published public var historyExpiryDays: Int { didSet { defaults.set(historyExpiryDays, forKey: Key.expiry) } }
+
+    @Published public var recordingFormat: RecordingFormat { didSet { defaults.set(recordingFormat.rawValue, forKey: Key.recording) } }
+
     /// True while Settings is recording a shortcut; global hotkeys are suspended. Not persisted.
     @Published public var isRecordingHotkey = false
 
@@ -59,6 +72,8 @@ public final class AppSettings: ObservableObject {
         autoDismissSeconds = max(0, defaults.integer(forKey: Key.autoDismiss))
         selfTimerSeconds = max(0, defaults.integer(forKey: Key.timer))
         hideDesktopIcons = defaults.bool(forKey: Key.hideIcons)
+        historyExpiryDays = max(0, defaults.integer(forKey: Key.expiry))
+        recordingFormat = RecordingFormat(rawValue: defaults.string(forKey: Key.recording) ?? "") ?? .mp4
 
         if let data = defaults.data(forKey: Key.hotkeys),
            let stored = try? JSONDecoder().decode([String: Hotkey].self, from: data) {

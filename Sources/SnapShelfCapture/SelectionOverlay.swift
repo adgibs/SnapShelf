@@ -168,7 +168,15 @@ final class SelectionView: NSView {
     // MARK: Input
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { onFinish?(nil) }
+        switch event.keyCode {
+        case 53:
+            onFinish?(nil)
+        case 36, 49, 76 where mode == .area:
+            // Return or Space takes the whole display.
+            onFinish?(.area(displayID: displayID, rect: CGRect(origin: .zero, size: bounds.size)))
+        default:
+            break
+        }
     }
 
     override func cancelOperation(_ sender: Any?) { onFinish?(nil) }

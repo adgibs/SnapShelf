@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMainMenu()
 
         AnnotationEditor.purgeExports()
+        CaptureCoordinator.purgeUnfinishedRecordings()
         history = HistoryStore()
         quickAccess = QuickAccessController(settings: settings)
         history.isInUse = { [weak self] id in
@@ -46,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showSettings: { [weak self] in self?.settingsWindow.show() }
         )
 
+        coordinator.onSessionChange = { [weak self] title in
+            self?.statusItem.setSession(title: title, stop: { self?.coordinator.stopActiveSession() })
+        }
+
         quickAccess.onCopy = { item in
             Clipboard.copyImage(at: item.fileURL)
             HUD.toast("Copied")
@@ -61,6 +66,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &subscriptions)
 
         log.notice("launched; screen recording granted: \(ScreenPermission.isGranted, privacy: .public)")
+        // History expiry runs at launch, when the setting changes, at midnight and on wake. No timer.
+        purgeExpiredHistory()
+        settings.$historyExpiryDays.dropFirst().receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.purgeExpiredHistory() }
+            .store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+            .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification))
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.purgeExpiredHistory() }
+            .store(in: &subscriptions)
+
         if !ScreenPermission.isGranted {
             permissionWindow.show()
         }
@@ -92,7 +108,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     coordinator.perform(.window)
                 }
             case ("capture", "screen"): coordinator.perform(.fullScreen)
-            case ("capture", "text"): coordinator.perform(.captureText)
+            case ("capture", "text"):
+                let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                func value(_ name: String) -> CGFloat? {
+                    query.first { $0.name == name }?.value.flatMap(Double.init).map { CGFloat($0) }
+                }
+                if let x = value("x"), let y = value("y"), let w = value("w"), let h = value("h") {
+                    coordinator.recognizeText(displayID: CGMainDisplayID(), rect: CGRect(x: x, y: y, width: w, height: h))
+                } else {
+                    coordinator.perform(.captureText)
+                }
+            case ("record", _), ("capture", "scroll"):
+                // With `?x=&y=&w=&h=` the session starts on that rectangle of the main display, with no selection UI.
+                let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                func value(_ name: String) -> CGFloat? {
+                    query.first { $0.name == name }?.value.flatMap(Double.init).map { CGFloat($0) }
+                }
+                let action: HotkeyAction = url.host == "record" ? .record : .scrollCapture
+                if !coordinator.sessionActive, let x = value("x"), let y = value("y"), let w = value("w"), let h = value("h") {
+                    let rect = CGRect(x: x, y: y, width: w, height: h)
+                    if action == .record {
+                        coordinator.startRecording(displayID: CGMainDisplayID(), rect: rect)
+                    } else {
+                        coordinator.startScrollCapture(displayID: CGMainDisplayID(), rect: rect)
+                    }
+                } else {
+                    coordinator.perform(action)
+                }
+            case ("stop", _): coordinator.stopActiveSession()
             case ("reopen", _): coordinator.perform(.reopenLast)
             case ("settings", _): settingsWindow.show()
             case ("annotate", _): history.mostRecent.map(annotate)
@@ -103,6 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    private func purgeExpiredHistory() {
+        let removed = history.removeExpired(days: settings.historyExpiryDays)
+        if removed > 0 { log.notice("history expiry removed \(removed) capture(s)") }
+    }
 
     private func registerHotkeys(_ hotkeys: [HotkeyAction: Hotkey]) {
         let bindings: [(Hotkey, () -> Void)] = hotkeys.map { action, hotkey in
@@ -115,6 +163,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func annotate(_ item: CaptureItem) {
+        guard item.isStillImage else {
+            HUD.toast("Recordings cannot be annotated")
+            return
+        }
         let editor = AnnotationEditor(
             item: item,
             onSave: { [weak self] image, scale in
@@ -142,6 +194,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func pin(_ item: CaptureItem) {
+        guard item.isStillImage else {
+            HUD.toast("Recordings cannot be pinned")
+            return
+        }
         pins.pin(item)
     }
 

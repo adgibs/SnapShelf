@@ -35,9 +35,12 @@ final class AnnotationCanvas: NSView, NSTextFieldDelegate {
     /// Points of view per image pixel, and where the image's top-left sits in the view.
     private var fit: (scale: CGFloat, origin: CGPoint) {
         let size = model.imageSize
+        let pad = model.padding(for: size)
+        // The background, when there is one, is part of what has to fit.
+        let outer = CGSize(width: size.width + pad * 2, height: size.height + pad * 2)
         let margin: CGFloat = 16
         let available = CGSize(width: max(bounds.width - margin * 2, 1), height: max(bounds.height - margin * 2, 1))
-        let s = min(available.width / size.width, available.height / size.height, 1 / model.scale * 2)
+        let s = min(available.width / outer.width, available.height / outer.height, 1 / model.scale * 2)
         return (s, CGPoint(x: (bounds.width - size.width * s) / 2, y: (bounds.height - size.height * s) / 2))
     }
 
@@ -65,7 +68,18 @@ final class AnnotationCanvas: NSView, NSTextFieldDelegate {
         ctx.translateBy(x: f.origin.x, y: f.origin.y)
         ctx.scaleBy(x: f.scale, y: f.scale)
         ctx.interpolationQuality = .high
+        let pad = model.padding(for: model.imageSize)
+        let hasBackdrop = model.backdrop != .none
+        if hasBackdrop {
+            // Preview of the background. With a crop, the export wraps the cropped area instead.
+            model.drawBackdrop(in: CGRect(origin: .zero, size: model.imageSize).insetBy(dx: -pad, dy: -pad), context: ctx)
+            ctx.saveGState()
+            let radius = model.cornerRadius(for: model.imageSize)
+            ctx.addPath(CGPath(roundedRect: CGRect(origin: .zero, size: model.imageSize), cornerWidth: radius, cornerHeight: radius, transform: nil))
+            ctx.clip()
+        }
         model.draw(in: ctx)
+        if hasBackdrop { ctx.restoreGState() }
 
         let full = CGRect(origin: .zero, size: model.imageSize)
         if let crop = liveCrop ?? model.crop {

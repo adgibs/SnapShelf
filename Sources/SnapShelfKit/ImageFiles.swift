@@ -156,6 +156,8 @@ public struct CaptureItem: Codable, Identifiable, Equatable {
     }
 
     public var baseName: String { fileURL.deletingPathExtension().lastPathComponent }
+    /// False for recordings (MP4, GIF), which cannot be annotated or pinned.
+    public var isStillImage: Bool { fileURL.pathExtension.lowercased() == "png" }
     public var sizeDescription: String { "\(pixelWidth) × \(pixelHeight)" }
 }
 
@@ -164,6 +166,12 @@ public enum SaveExporter {
     @discardableResult
     public static func save(_ item: CaptureItem, to folder: URL, format: ImageFormat, fileManager: FileManager = .default) throws -> URL {
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard item.isStillImage else {
+            // Recordings are saved as they are.
+            let dest = FileNamer.uniqueURL(directory: folder, baseName: item.baseName, ext: item.fileURL.pathExtension, fileManager: fileManager)
+            try fileManager.copyItem(at: item.fileURL, to: dest)
+            return dest
+        }
         let dest = FileNamer.uniqueURL(directory: folder, baseName: item.baseName, ext: format.fileExtension, fileManager: fileManager)
         switch format {
         case .png:

@@ -41,10 +41,12 @@ window comes back instead of a black image.
 | Capture window | ⌃⇧5 |
 | Capture full screen (display under the pointer) | ⌃⇧3 |
 | Capture text (OCR to clipboard) | ⌃⇧T |
+| Record screen (press again to stop) | ⌃⇧6 |
+| Scrolling capture (press again to finish) | ⌃⇧7 |
 | Reopen last capture in the overlay | ⌃⇧R |
 
 Change them in Settings (menu bar icon › Settings…). During a selection, Esc or a right-click
-cancels. Pressing the hotkey again also cancels.
+cancels. Pressing the hotkey again also cancels. Return or Space selects the whole display.
 
 ## Using it
 
@@ -57,11 +59,21 @@ cancels. Pressing the hotkey again also cancels.
   steps, highlighter, blur, pixelate and crop, with undo and redo. Objects stay movable and
   restylable (use the Select tool; Delete removes, double-click text to edit, Shift constrains).
   Copy, Save, or drag the edited image out from the toolbar handle.
+- **Capture text**: drag over any text on screen. The recognised text goes to the clipboard and a
+  message confirms how many lines were copied. No image is saved.
+- **Record screen**: drag an area (or press Return for the whole display). The menu bar icon turns
+  into a red stop button; click it or press the hotkey again to stop. The recording arrives on the
+  shelf and in history as an MP4 or GIF (choose in Settings), ready to drag out. Video only, no audio.
+- **Scrolling capture**: drag over the part of a window that scrolls, scroll down at a steady pace,
+  then press the hotkey again or click the menu bar icon. The frames are stitched into one tall PNG.
+  Scroll downwards only, and keep at least part of the previous view on screen between frames.
+- **Backgrounds and padding**: in the annotation editor, pick a background to place the capture on a
+  gradient with padding, rounded corners and a shadow. The slider beside it sets the padding.
 - **Pin** floats a capture above all windows. Drag to move, drag an edge to resize, scroll or
   right-click to change opacity, Esc or right-click › Close to remove.
 - **Settings**: hotkeys, after-capture actions (copy to clipboard, show overlay, save to folder),
   save folder (default `~/Pictures/SnapShelf`), file name pattern, PNG or JPEG, self-timer, hide
-  desktop icons, overlay corner, auto-dismiss, launch at login.
+  desktop icons, recording format, overlay corner, auto-dismiss, history expiry, launch at login.
 
 Dragged files are always PNG at native pixel resolution; the PNG/JPEG setting applies to files
 saved to the save folder.
@@ -70,7 +82,8 @@ saved to the save folder.
 
 | Location | Contents | Limit |
 | --- | --- | --- |
-| `~/Library/Application Support/SnapShelf/History` | The last 20 captures as PNG, each with a small thumbnail, plus `index.json` | Oldest is deleted as each new capture arrives. A capture still on the shelf or open in the editor is kept until released. Folders the index does not know about are deleted at launch. **Clear** in the menu empties it. |
+| `~/Library/Application Support/SnapShelf/History` | The last 20 captures as PNG, each with a small thumbnail, plus `index.json` | Oldest is deleted as each new capture arrives. A capture still on the shelf or open in the editor is kept until released. Folders the index does not know about are deleted at launch. With **Keep captures › For a number of days** in Settings, older captures are also deleted at launch, at midnight and on wake. **Clear** in the menu empties it. |
+| `$TMPDIR/SnapShelf-recording` | A screen recording while it is being made | Moved into history when the recording stops; anything left by a crash is deleted at launch. |
 | `$TMPDIR/SnapShelf-drag` | The edited image while you drag it out of the annotation editor | One file per open editor, removed when the editor closes or exports again, and the whole folder is emptied at launch. |
 | `~/Library/Preferences/app.snapshelf.SnapShelf.plist` | Settings | A few kilobytes. |
 | Your save folder | Only what you save | Never cleaned up by SnapShelf. |
@@ -83,7 +96,8 @@ quit the app and delete the first and third rows.
 The app registers a `snapshelf://` URL scheme, handy for scripts and testing:
 
 ```bash
-open -g "snapshelf://capture/area"                      # also window, screen, text
+open -g "snapshelf://capture/area"                      # also window, screen, text, scroll
+open -g "snapshelf://record"                            # start or stop a recording; snapshelf://stop ends any session
 open -g "snapshelf://capture/area?x=100&y=200&w=400&h=300"   # fixed rectangle, main display, points
 open -g "snapshelf://reopen"                            # also settings, annotate, pin
 ```
@@ -96,7 +110,7 @@ UI automation tools need in order to see it.
 | Module | Contents |
 | --- | --- |
 | `SnapShelfKit` | Settings, hotkey model, image encoding, file naming, clipboard, file drag source |
-| `SnapShelfCapture` | ScreenCaptureKit capture, area and window selection overlay, permission, OCR |
+| `SnapShelfCapture` | ScreenCaptureKit capture, area and window selection overlay, permission, OCR, screen recorder, GIF export, scroll stitcher |
 | `SnapShelfOverlay` | Quick access thumbnails, pinned captures |
 | `SnapShelfHistory` | History store and the menu bar list |
 | `SnapShelfSettings` | Settings window, hotkey recorder, launch at login |
@@ -107,8 +121,14 @@ UI automation tools need in order to see it.
 
 Checked on a two-display, non-Retina setup (2 × 2560×1440):
 
-- 24 unit tests pass (image files, file naming, history and its clean-up, save export, settings,
-  drag payload, annotation rendering and undo).
+- 34 unit tests pass (image files, file naming, history with its clean-up and expiry, save export,
+  settings, drag payload, annotation rendering and undo, backgrounds, scroll stitching, recordings).
+- Screen recording in the running app: a 640×400 area recorded for about four seconds gave a valid
+  3.9 s MP4, and with the GIF setting a 48-frame GIF.
+- Scrolling capture in the running app: a 240-line TextEdit document scrolled in ten steps stitched
+  into a 740×1884 PNG with every line number in sequence and no frames missed.
+- Capture Text in the running app read the menu bar titles correctly.
+- History expiry in the running app: a capture aged ten days was deleted at launch with a 7-day limit.
 - Real area, full-screen and window captures produce valid PNGs at native pixel size.
 - A fixed-rectangle capture matches the same region of a full-screen capture pixel for pixel
   (0.2% of values differed, from content that changed between the two shots).
@@ -126,11 +146,17 @@ Not checked, because it needs hands on the pointer or hardware that was not avai
 - Drawing in the annotation editor, the swipe-to-dismiss gesture, and pin resizing and opacity.
 - Retina and mixed-DPI displays. Capture sizes come from ScreenCaptureKit's point-to-pixel scale
   per display and selections snap to whole pixels, but only 1× displays were tested.
-- Capture Text, the self-timer, hide desktop icons, launch at login, and JPEG saving in the running app.
+- The self-timer, hide desktop icons, launch at login, and JPEG saving in the running app.
+- Recording and scrolling capture started from the hotkey with a hand-drawn selection, and the stop
+  button in the menu bar: they were started and stopped through the URL scheme. Scrolling was done
+  in fixed steps, not with a trackpad's smooth scroll.
+- Choosing a background in the editor window (the rendered output is checked, the control is not).
+- Long recordings, and recordings on Retina displays.
 
 ## Not built
 
-- Phase 3: screen recording to MP4 and GIF, scrolling capture, capture backgrounds and padding.
+- Audio in recordings, and pausing a recording.
+- Scrolling capture upwards or sideways, and automatic scrolling.
 - Layout-aware hotkey names: key names in Settings assume a US/UK-style layout.
 
 ## Licence

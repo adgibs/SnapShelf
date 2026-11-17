@@ -19,6 +19,13 @@ public extension NSScreen {
 public enum Clipboard {
     /// Copies the PNG at `url` as image data. TIFF is offered too, but only produced if an app asks for it.
     public static func copyImage(at url: URL) {
+        guard url.pathExtension.lowercased() == "png" else {
+            // Recordings go on the clipboard as a file, which Finder and chat apps paste as an attachment.
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.writeObjects([url as NSURL])
+            return
+        }
         guard let data = try? Data(contentsOf: url) else { return }
         copy(pngData: data)
     }

@@ -8,12 +8,20 @@ import os
 /// Runs a capture from hotkey to finished file: permission check, selection, capture, then the after-capture actions.
 @MainActor
 final class CaptureCoordinator {
-    private let settings: AppSettings
-    private let history: HistoryStore
+    let settings: AppSettings
+    let history: HistoryStore
     private let quickAccess: QuickAccessController
-    private let permissionWindow: PermissionWindowController
-    private let selection = SelectionOverlay()
-    private var busy = false
+    let permissionWindow: PermissionWindowController
+    let selection = SelectionOverlay()
+    var busy = false
+
+    // Running sessions (see Sessions.swift).
+    var recorder: ScreenRecorder?
+    var scrollTask: Task<Void, Never>?
+    var stitcher: ScrollStitcher?
+    var scrollScale: CGFloat = 1
+    /// Called with a "stop" title when a recording or scrolling capture starts, and nil when it ends.
+    var onSessionChange: ((String?) -> Void)?
 
     init(settings: AppSettings, history: HistoryStore, quickAccess: QuickAccessController, permissionWindow: PermissionWindowController) {
         self.settings = settings
@@ -25,6 +33,14 @@ final class CaptureCoordinator {
     func perform(_ action: HotkeyAction) {
         if action == .reopenLast {
             reopenLast()
+            return
+        }
+        if action == .record || action == .scrollCapture {
+            toggleSession(action)
+            return
+        }
+        if sessionActive {
+            HUD.toast("Finish the current recording first")
             return
         }
         // Pressing a capture hotkey again while selecting cancels the selection.
@@ -71,25 +87,33 @@ final class CaptureCoordinator {
         case .captureText:
             selection.begin(mode: .area) { [weak self] result in
                 guard let self, case let .area(displayID, rect)? = result else { return }
-                self.busy = true
-                Task {
-                    defer { self.busy = false }
-                    do {
-                        let captured = try await ScreenCapturer.captureDisplay(displayID, rect: rect)
-                        let text = try await TextRecognizer.recognize(in: captured.image)
-                        if text.isEmpty {
-                            HUD.toast("No text found")
-                        } else {
-                            Clipboard.copy(text: text)
-                            HUD.toast("Text copied")
-                        }
-                    } catch {
-                        self.report(error)
-                    }
-                }
+                self.recognizeText(displayID: displayID, rect: rect)
             }
-        case .reopenLast:
+        case .reopenLast, .record, .scrollCapture:
             break
+        }
+    }
+
+    /// Reads the text in a rectangle of the screen and puts it on the clipboard. Nothing is saved to history.
+    func recognizeText(displayID: CGDirectDisplayID, rect: CGRect) {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let captured = try await ScreenCapturer.captureDisplay(displayID, rect: rect)
+                let text = try await TextRecognizer.recognize(in: captured.image)
+                if text.isEmpty {
+                    HUD.toast("No text found in that area", seconds: 2.5)
+                } else {
+                    Clipboard.copy(text: text)
+                    let lines = text.split(separator: "\n").count
+                    HUD.toast("Copied \(lines) line\(lines == 1 ? "" : "s") of text to the clipboard", seconds: 2.5)
+                }
+                log.notice("capture text: \(text.count) characters")
+            } catch {
+                report(error)
+            }
         }
     }
 
@@ -135,10 +159,15 @@ final class CaptureCoordinator {
             try store.write(image: image, scale: scale, mode: mode, pattern: pattern)
         }.value
         store.insert(item)
+        afterCapture(item, forceOverlay: forceOverlay)
+        return item
+    }
+
+    /// The after-capture actions from Settings.
+    func afterCapture(_ item: CaptureItem, forceOverlay: Bool = false) {
         if settings.copyToClipboard { Clipboard.copyImage(at: item.fileURL) }
         if settings.saveToFolder { save(item, announce: false) }
         if settings.showOverlay || forceOverlay { quickAccess.show(item) }
-        return item
     }
 
     @discardableResult
@@ -161,7 +190,7 @@ final class CaptureCoordinator {
         quickAccess.show(item)
     }
 
-    private func report(_ error: Error) {
+    func report(_ error: Error) {
         log.error("capture failed: \(String(describing: error), privacy: .public)")
         if case CaptureError.permissionDenied = error {
             permissionWindow.show()

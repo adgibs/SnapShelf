@@ -58,7 +58,7 @@ public struct Hotkey: Codable, Equatable, Hashable {
 
 /// Everything that can be bound to a global hotkey.
 public enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
-    case area, window, fullScreen, reopenLast, captureText
+    case area, window, fullScreen, reopenLast, captureText, record, scrollCapture
 
     public var id: String { rawValue }
 
@@ -69,6 +69,8 @@ public enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         case .fullScreen: return "Capture Full Screen"
         case .reopenLast: return "Reopen Last Capture"
         case .captureText: return "Capture Text"
+        case .record: return "Record Screen"
+        case .scrollCapture: return "Scrolling Capture"
         }
     }
 
@@ -79,6 +81,8 @@ public enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         case .fullScreen: return "display"
         case .reopenLast: return "arrow.uturn.backward"
         case .captureText: return "text.viewfinder"
+        case .record: return "record.circle"
+        case .scrollCapture: return "arrow.up.and.down.text.horizontal"
         }
     }
 
@@ -90,6 +94,8 @@ public enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         case .window: return Hotkey(keyCode: 23, modifiers: mods)     // ⌃⇧5
         case .reopenLast: return Hotkey(keyCode: 15, modifiers: mods) // ⌃⇧R
         case .captureText: return Hotkey(keyCode: 17, modifiers: mods) // ⌃⇧T
+        case .record: return Hotkey(keyCode: 22, modifiers: mods)      // ⌃⇧6
+        case .scrollCapture: return Hotkey(keyCode: 26, modifiers: mods) // ⌃⇧7
         }
     }
 }

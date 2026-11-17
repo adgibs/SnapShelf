@@ -26,7 +26,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SnapShelfTests",
-            dependencies: ["SnapShelfKit", "SnapShelfHistory", "SnapShelfAnnotate"]
+            dependencies: ["SnapShelfKit", "SnapShelfHistory", "SnapShelfAnnotate", "SnapShelfCapture"]
         ),
     ]
 )

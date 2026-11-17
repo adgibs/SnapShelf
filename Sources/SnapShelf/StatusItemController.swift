@@ -13,6 +13,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let perform: (HotkeyAction) -> Void
     private let actions: HistoryActions
     private var previousApp: NSRunningApplication?
+    private var stopSession: (() -> Void)?
+
+    /// While a recording or scrolling capture runs, the icon becomes a stop button.
+    func setSession(title: String?, stop: (() -> Void)?) {
+        stopSession = title == nil ? nil : stop
+        guard let button = statusItem.button else { return }
+        if let title {
+            button.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: title)
+            button.contentTintColor = .systemRed
+            button.toolTip = title
+        } else {
+            button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "SnapShelf")
+            button.contentTintColor = nil
+            button.toolTip = "SnapShelf"
+        }
+    }
 
     init(
         settings: AppSettings, history: HistoryStore,
@@ -55,12 +71,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func toggle() {
+        if let stopSession {
+            stopSession()
+            return
+        }
         if popover.isShown {
             popover.performClose(nil)
             return
         }
         guard let button = statusItem.button else { return }
-        let commands = [HotkeyAction.area, .window, .fullScreen, .captureText, .reopenLast].map { action in
+        let commands = [HotkeyAction.area, .window, .fullScreen, .scrollCapture, .record, .captureText, .reopenLast].map { action in
             MenuCommand(
                 id: action.rawValue, title: action.title, symbol: action.symbolName,
                 shortcut: settings.hotkeys[action]?.displayString
