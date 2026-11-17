@@ -1,0 +1,288 @@
+import AppKit
+import CoreGraphics
+import XCTest
+@testable import SnapShelfHistory
+@testable import SnapShelfKit
+
+func makeImage(width: Int, height: Int, alpha: Bool = true) -> CGImage {
+    let ctx = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: (alpha ? CGImageAlphaInfo.premultipliedLast : CGImageAlphaInfo.noneSkipLast).rawValue
+    )!
+    ctx.setFillColor(CGColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1))
+    ctx.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+    return ctx.makeImage()!
+}
+
+func tempDirectory() -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("SnapShelfTests-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+final class ImageCodecTests: XCTestCase {
+    func testPNGRoundTripKeepsPixelSizeAndSignature() throws {
+        let data = try XCTUnwrap(ImageCodec.encode(makeImage(width: 640, height: 400), format: .png, scale: 2))
+        XCTAssertEqual(Array(data.prefix(8)), [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let url = tempDirectory().appendingPathComponent("a.png")
+        try data.write(to: url)
+        XCTAssertEqual(ImageCodec.pixelSize(of: url), CGSize(width: 640, height: 400))
+        let loaded = try XCTUnwrap(ImageCodec.load(url))
+        XCTAssertEqual(loaded.width, 640)
+        XCTAssertEqual(loaded.height, 400)
+    }
+
+    func testPNGRecordsRetinaDPI() throws {
+        let url = tempDirectory().appendingPathComponent("a.png")
+        try ImageCodec.write(makeImage(width: 100, height: 100), to: url, format: .png, scale: 2)
+        let src = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let props = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any])
+        XCTAssertEqual((props[kCGImagePropertyDPIWidth] as? Double ?? 0).rounded(), 144)
+    }
+
+    func testPNGKeepsTransparency() throws {
+        let url = tempDirectory().appendingPathComponent("a.png")
+        try ImageCodec.write(makeImage(width: 20, height: 20), to: url, format: .png)
+        let loaded = try XCTUnwrap(ImageCodec.load(url))
+        XCTAssertFalse([.none, .noneSkipFirst, .noneSkipLast].contains(loaded.alphaInfo))
+    }
+
+    func testJPEGIsFlattenedAndHasSignature() throws {
+        let data = try XCTUnwrap(ImageCodec.encode(makeImage(width: 64, height: 64), format: .jpeg))
+        XCTAssertEqual(Array(data.prefix(2)), [0xFF, 0xD8])
+        let flat = try XCTUnwrap(ImageCodec.flattened(makeImage(width: 4, height: 4)))
+        XCTAssertEqual(flat.alphaInfo, .noneSkipLast)
+        // The right half was transparent, so it becomes white.
+        let bytes = try XCTUnwrap(flat.dataProvider?.data as Data?)
+        let offset = 3 * 4 // pixel (3, 0)
+        XCTAssertEqual([bytes[offset], bytes[offset + 1], bytes[offset + 2]], [255, 255, 255])
+    }
+
+    func testThumbnailScalesDownButNeverUp() throws {
+        let thumb = try XCTUnwrap(ImageCodec.thumbnail(of: makeImage(width: 2000, height: 1000), maxPixel: 480))
+        XCTAssertEqual(thumb.width, 480)
+        XCTAssertEqual(thumb.height, 240)
+        let small = try XCTUnwrap(ImageCodec.thumbnail(of: makeImage(width: 100, height: 50), maxPixel: 480))
+        XCTAssertEqual(small.width, 100)
+    }
+}
+
+final class FileNamerTests: XCTestCase {
+    let date = Date(timeIntervalSince1970: 1_800_000_000) // 2027-01-15 08:00:00 UTC
+    let utc = TimeZone(identifier: "UTC")!
+
+    func testTokens() {
+        let name = FileNamer.baseName(
+            pattern: "Shot {date} {time} {mode} {width}x{height}", date: date, mode: "area",
+            pixelWidth: 800, pixelHeight: 600, timeZone: utc
+        )
+        XCTAssertEqual(name, "Shot 2027-01-15 08.00.00 area 800x600")
+    }
+
+    func testSanitisesPathCharactersAndEmptyPatterns() {
+        XCTAssertEqual(FileNamer.baseName(pattern: "a/b:c", date: date, mode: "m", pixelWidth: 1, pixelHeight: 1), "a-b-c")
+        XCTAssertEqual(FileNamer.baseName(pattern: "  ", date: date, mode: "m", pixelWidth: 1, pixelHeight: 1), "SnapShelf")
+        XCTAssertEqual(FileNamer.baseName(pattern: "..hidden", date: date, mode: "m", pixelWidth: 1, pixelHeight: 1), "hidden")
+    }
+
+    func testUniqueURLAvoidsExistingFiles() throws {
+        let dir = tempDirectory()
+        let first = FileNamer.uniqueURL(directory: dir, baseName: "Shot", ext: "png")
+        XCTAssertEqual(first.lastPathComponent, "Shot.png")
+        try Data().write(to: first)
+        let second = FileNamer.uniqueURL(directory: dir, baseName: "Shot", ext: "png")
+        XCTAssertEqual(second.lastPathComponent, "Shot 2.png")
+        try Data().write(to: second)
+        XCTAssertEqual(FileNamer.uniqueURL(directory: dir, baseName: "Shot", ext: "png").lastPathComponent, "Shot 3.png")
+    }
+}
+
+final class HistoryStoreTests: XCTestCase {
+    func testAddWritesPNGAndThumbnail() throws {
+        let store = HistoryStore(directory: tempDirectory())
+        let item = try store.add(image: makeImage(width: 1200, height: 800), scale: 2, mode: "area", pattern: "Shot {width}")
+        XCTAssertEqual(item.fileURL.lastPathComponent, "Shot 1200.png")
+        XCTAssertEqual(ImageCodec.pixelSize(of: item.fileURL), CGSize(width: 1200, height: 800))
+        XCTAssertEqual(ImageCodec.pixelSize(of: item.thumbnailURL), CGSize(width: 480, height: 320))
+        XCTAssertEqual(store.items, [item])
+        XCTAssertEqual(store.mostRecent, item)
+    }
+
+    func testNewestFirstAndPrunesPastLimit() throws {
+        let store = HistoryStore(directory: tempDirectory(), limit: 3)
+        var added: [CaptureItem] = []
+        for i in 0..<5 {
+            added.append(try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "n\(i)"))
+        }
+        XCTAssertEqual(store.items.map(\.baseName), ["n4", "n3", "n2"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: added[0].fileURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: added[1].fileURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: added[2].fileURL.path))
+    }
+
+    func testPersistsAcrossInstancesAndDropsMissingFiles() throws {
+        let dir = tempDirectory()
+        let store = HistoryStore(directory: dir)
+        let a = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "a")
+        let b = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "b")
+        XCTAssertEqual(HistoryStore(directory: dir).items, [b, a])
+
+        try FileManager.default.removeItem(at: a.fileURL)
+        XCTAssertEqual(HistoryStore(directory: dir).items, [b])
+    }
+
+    func testRemoveAndClear() throws {
+        let store = HistoryStore(directory: tempDirectory())
+        let a = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "a")
+        let b = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "b")
+        store.remove(a)
+        XCTAssertEqual(store.items, [b])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: a.fileURL.path))
+        store.clear()
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: b.fileURL.path))
+    }
+}
+
+final class SaveExporterTests: XCTestCase {
+    func testSavesPNGAndJPEGWithUniqueNames() throws {
+        let store = HistoryStore(directory: tempDirectory())
+        let item = try store.add(image: makeImage(width: 300, height: 200), scale: 2, mode: "area", pattern: "Shot")
+        let folder = tempDirectory().appendingPathComponent("nested/out")
+
+        let png = try SaveExporter.save(item, to: folder, format: .png)
+        XCTAssertEqual(png.lastPathComponent, "Shot.png")
+        XCTAssertEqual(try Data(contentsOf: png), try Data(contentsOf: item.fileURL))
+        XCTAssertEqual(try SaveExporter.save(item, to: folder, format: .png).lastPathComponent, "Shot 2.png")
+
+        let jpg = try SaveExporter.save(item, to: folder, format: .jpeg)
+        XCTAssertEqual(jpg.lastPathComponent, "Shot.jpg")
+        XCTAssertEqual(ImageCodec.pixelSize(of: jpg), CGSize(width: 300, height: 200))
+        XCTAssertEqual(Array(try Data(contentsOf: jpg).prefix(2)), [0xFF, 0xD8])
+    }
+}
+
+final class SettingsTests: XCTestCase {
+    func makeDefaults() -> UserDefaults {
+        let name = "SnapShelfTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    func testDefaults() {
+        let s = AppSettings(defaults: makeDefaults())
+        XCTAssertTrue(s.copyToClipboard)
+        XCTAssertTrue(s.showOverlay)
+        XCTAssertFalse(s.saveToFolder)
+        XCTAssertEqual(s.saveFolderPath, "~/Pictures/SnapShelf")
+        XCTAssertEqual(s.corner, .bottomLeft)
+        XCTAssertEqual(s.autoDismissSeconds, 0)
+        XCTAssertEqual(s.format, .png)
+        XCTAssertEqual(s.hotkeys[.area]?.displayString, "⌃⇧4")
+        XCTAssertEqual(Set(s.hotkeys.values).count, HotkeyAction.allCases.count, "default hotkeys must not collide")
+    }
+
+    func testPersistenceAndHotkeyConflicts() {
+        let defaults = makeDefaults()
+        let s = AppSettings(defaults: defaults)
+        s.corner = .bottomRight
+        s.autoDismissSeconds = 12
+        s.format = .jpeg
+        let key = Hotkey(keyCode: 0, modifiers: Hotkey.command | Hotkey.option)
+        s.setHotkey(key, for: .area)
+        s.setHotkey(key, for: .window) // takes it from .area
+        s.setHotkey(nil, for: .fullScreen)
+
+        let reloaded = AppSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.corner, .bottomRight)
+        XCTAssertEqual(reloaded.autoDismissSeconds, 12)
+        XCTAssertEqual(reloaded.format, .jpeg)
+        XCTAssertNil(reloaded.hotkeys[.area])
+        XCTAssertEqual(reloaded.hotkeys[.window], key)
+        XCTAssertNil(reloaded.hotkeys[.fullScreen])
+        XCTAssertEqual(key.displayString, "⌥⌘A")
+    }
+}
+
+final class DragPayloadTests: XCTestCase {
+    /// What a drop target reads: a file URL that resolves to the full-size PNG.
+    func testDragPasteboardCarriesTheRealPNGFile() throws {
+        let store = HistoryStore(directory: tempDirectory())
+        let item = try store.add(image: makeImage(width: 800, height: 500), scale: 2, mode: "area", pattern: "Shot")
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        XCTAssertTrue(pasteboard.writeObjects([FileDragWriter(url: item.fileURL)]))
+        XCTAssertEqual(pasteboard.data(forType: .png), try Data(contentsOf: item.fileURL))
+        XCTAssertTrue(pasteboard.types?.contains(.fileURL) ?? false)
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        let dropped = try XCTUnwrap(urls?.first)
+        XCTAssertEqual(dropped.pathExtension, "png")
+        XCTAssertEqual(ImageCodec.pixelSize(of: dropped), CGSize(width: 800, height: 500))
+        XCTAssertEqual(Array(try Data(contentsOf: dropped).prefix(4)), [0x89, 0x50, 0x4E, 0x47])
+    }
+}
+
+@testable import SnapShelfAnnotate
+
+final class AnnotationTests: XCTestCase {
+    func testRenderKeepsPixelSizeAndAppliesCrop() throws {
+        let model = EditorModel(image: makeImage(width: 400, height: 300, alpha: false), scale: 2)
+        model.add(Annotation(tool: .rectangle, start: CGPoint(x: 10, y: 10), end: CGPoint(x: 100, y: 80), color: .red, width: 6))
+        model.add(Annotation(tool: .blur, start: CGPoint(x: 150, y: 50), end: CGPoint(x: 300, y: 200), color: .red, width: 6))
+        model.add(Annotation(tool: .text, start: CGPoint(x: 20, y: 200), end: .zero, color: .red, width: 6, text: "Hi"))
+        let full = try XCTUnwrap(model.render())
+        XCTAssertEqual([full.width, full.height], [400, 300])
+
+        model.setCrop(CGRect(x: 50, y: 40, width: 200, height: 100))
+        let cropped = try XCTUnwrap(model.render())
+        XCTAssertEqual([cropped.width, cropped.height], [200, 100])
+    }
+
+    func testAnnotationIsDrawnWhereItWasPlaced() throws {
+        // White image; a red stroke near the top-left must land in the top-left of the output.
+        let ctx = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let model = EditorModel(image: ctx.makeImage()!, scale: 1)
+        model.add(Annotation(tool: .line, start: CGPoint(x: 5, y: 10), end: CGPoint(x: 40, y: 10), color: NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1), width: 6))
+        let out = try XCTUnwrap(model.render())
+        let data = try XCTUnwrap(out.dataProvider?.data as Data?)
+        func pixel(_ x: Int, _ y: Int) -> [UInt8] { // y counted from the top
+            let o = y * out.bytesPerRow + x * 4
+            return [data[o], data[o + 1], data[o + 2]]
+        }
+        XCTAssertEqual(pixel(20, 10), [255, 0, 0])
+        XCTAssertEqual(pixel(20, 90), [255, 255, 255])
+    }
+
+    func testUndoRedoAndStepNumbers() {
+        let model = EditorModel(image: makeImage(width: 50, height: 50), scale: 1)
+        XCTAssertFalse(model.canUndo)
+        for _ in 0..<2 {
+            model.add(Annotation(tool: .step, start: .zero, end: .zero, color: .red, width: 3, number: model.nextStepNumber))
+        }
+        XCTAssertEqual(model.annotations.map(\.number), [1, 2])
+        model.undo()
+        XCTAssertEqual(model.annotations.count, 1)
+        XCTAssertTrue(model.canRedo)
+        model.redo()
+        XCTAssertEqual(model.annotations.count, 2)
+        model.setCrop(CGRect(x: 0, y: 0, width: 10, height: 10))
+        model.undo()
+        XCTAssertNil(model.crop)
+    }
+
+    func testHitTestingAndMoving() {
+        var line = Annotation(tool: .line, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 100, y: 0), color: .red, width: 2)
+        XCTAssertTrue(line.hitTest(CGPoint(x: 50, y: 3), tolerance: 4))
+        XCTAssertFalse(line.hitTest(CGPoint(x: 50, y: 30), tolerance: 4))
+        line.translate(dx: 0, dy: 30)
+        XCTAssertTrue(line.hitTest(CGPoint(x: 50, y: 30), tolerance: 4))
+        let rect = Annotation(tool: .rectangle, start: .zero, end: CGPoint(x: 100, y: 100), color: .red, width: 2)
+        XCTAssertTrue(rect.hitTest(CGPoint(x: 0, y: 50), tolerance: 4))
+        XCTAssertFalse(rect.hitTest(CGPoint(x: 50, y: 50), tolerance: 4))
+    }
+}
