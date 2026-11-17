@@ -44,6 +44,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings, history: history,
             perform: { [weak self] in self?.coordinator.perform($0) },
             open: { [weak self] in self?.quickAccess.show($0) },
+            delete: { [weak self] item in
+                // Gone from the shelf too, so no thumbnail is left pointing at a deleted file.
+                self?.quickAccess.dismiss(item.id, animated: false)
+                self?.history.remove(item)
+            },
+            clear: { [weak self] in
+                self?.quickAccess.dismissAll()
+                self?.history.clear()
+            },
             showSettings: { [weak self] in self?.settingsWindow.show() }
         )
 

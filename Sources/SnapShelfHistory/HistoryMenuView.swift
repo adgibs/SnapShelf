@@ -24,6 +24,7 @@ public struct HistoryActions {
     public var copy: (CaptureItem) -> Void
     public var reveal: (CaptureItem) -> Void
     public var dragEnded: (Bool) -> Void
+    public var delete: (CaptureItem) -> Void
     public var clear: () -> Void
     public var settings: () -> Void
     public var quit: () -> Void
@@ -31,12 +32,13 @@ public struct HistoryActions {
     public init(
         open: @escaping (CaptureItem) -> Void, copy: @escaping (CaptureItem) -> Void,
         reveal: @escaping (CaptureItem) -> Void, dragEnded: @escaping (Bool) -> Void,
-        clear: @escaping () -> Void, settings: @escaping () -> Void, quit: @escaping () -> Void
+        delete: @escaping (CaptureItem) -> Void, clear: @escaping () -> Void, settings: @escaping () -> Void, quit: @escaping () -> Void
     ) {
         self.open = open
         self.copy = copy
         self.reveal = reveal
         self.dragEnded = dragEnded
+        self.delete = delete
         self.clear = clear
         self.settings = settings
         self.quit = quit
@@ -83,6 +85,8 @@ struct HistoryRow: View {
     let item: CaptureItem
     let actions: HistoryActions
     @State private var hovering = false
+    /// True after the bin is clicked, while the row asks "Delete?".
+    @State private var confirmingDelete = false
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -126,18 +130,37 @@ struct HistoryRow: View {
                 )
             )
 
-            Button { actions.copy(item) } label: { Image(systemName: "doc.on.doc") }
-                .help("Copy")
-                .accessibilityLabel("Copy")
-            Button { actions.reveal(item) } label: { Image(systemName: "folder") }
-                .help("Reveal in Finder")
-                .accessibilityLabel("Reveal in Finder")
+            if confirmingDelete {
+                // Asked in the row itself: an alert would close the menu.
+                Button("Delete", role: .destructive) { actions.delete(item) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.small)
+                    .accessibilityLabel("Confirm delete")
+                Button("Cancel") { confirmingDelete = false }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            } else {
+                Button { actions.copy(item) } label: { Image(systemName: "doc.on.doc") }
+                    .help("Copy")
+                    .accessibilityLabel("Copy")
+                Button { actions.reveal(item) } label: { Image(systemName: "folder") }
+                    .help("Reveal in Finder")
+                    .accessibilityLabel("Reveal in Finder")
+                Button { confirmingDelete = true } label: { Image(systemName: "trash") }
+                    .help("Delete from history")
+                    .accessibilityLabel("Delete from history")
+            }
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(hovering ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            // Moving away withdraws the question, so a stray click later cannot delete.
+            if !inside { confirmingDelete = false }
+        }
     }
 }
 
@@ -173,6 +196,7 @@ public struct HistoryMenuView: View {
     @ObservedObject var store: HistoryStore
     let commands: [MenuCommand]
     let actions: HistoryActions
+    @State private var confirmingClear = false
 
     public init(store: HistoryStore, commands: [MenuCommand], actions: HistoryActions) {
         self.store = store
@@ -191,7 +215,18 @@ public struct HistoryMenuView: View {
                 Text("Recent captures").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if !store.items.isEmpty {
-                    Button("Clear", action: actions.clear).buttonStyle(.borderless).font(.caption)
+                    if confirmingClear {
+                        Text("Delete all \(store.items.count)?").font(.caption)
+                        Button("Delete all", role: .destructive) {
+                            confirmingClear = false
+                            actions.clear()
+                        }
+                        .buttonStyle(.borderedProminent).tint(.red).controlSize(.mini)
+                        Button("Cancel") { confirmingClear = false }
+                            .buttonStyle(.bordered).controlSize(.mini)
+                    } else {
+                        Button("Clear") { confirmingClear = true }.buttonStyle(.borderless).font(.caption)
+                    }
                 }
             }
             .padding(.horizontal, 10)

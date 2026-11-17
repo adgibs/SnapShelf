@@ -34,6 +34,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         settings: AppSettings, history: HistoryStore,
         perform: @escaping (HotkeyAction) -> Void,
         open: @escaping (CaptureItem) -> Void,
+        delete: @escaping (CaptureItem) -> Void,
+        clear: @escaping () -> Void,
         showSettings: @escaping () -> Void
     ) {
         self.settings = settings
@@ -52,7 +54,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 NSWorkspace.shared.activateFileViewerSelecting([item.fileURL])
             },
             dragEnded: { _ in close() },
-            clear: { history.clear() },
+            delete: delete,
+            clear: clear,
             settings: { close(); showSettings() },
             quit: { NSApp.terminate(nil) }
         )

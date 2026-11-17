@@ -53,10 +53,11 @@ cancels. Pressing the hotkey again also cancels. Return or Space selects the who
 ## Using it
 
 - **Thumbnails** stay in the bottom-left (or bottom-right) corner until you act on them. Drag one
-  out to drop the PNG, hover for Copy, Save, Annotate, Pin and Close, or swipe sideways with two
+  out to drop the PNG, double-click to open it in Preview (or QuickTime for a recording), hover for Copy, Save, Annotate, Pin and Close, or swipe sideways with two
   fingers to dismiss. Up to five stack, newest at the bottom.
 - **Menu bar icon** lists the last 20 captures. Drag a row out, click it to reopen it in the
-  overlay, or use its Copy and Reveal in Finder buttons.
+  overlay, or use its Copy, Reveal in Finder and Delete buttons. Delete and Clear each ask once
+  before removing anything; files already saved to your save folder are not touched.
 - **Annotate** opens an editor: select, arrow, rectangle, ellipse, line, freehand, text, numbered
   steps, highlighter, blur, pixelate and crop, with undo and redo. Objects stay movable and
   restylable (use the Select tool; Delete removes, double-click text to edit, Shift constrains).
@@ -70,8 +71,10 @@ cancels. Pressing the hotkey again also cancels. Return or Space selects the who
   SnapShelf loads the page in a hidden web view 1280 points wide and captures all of it, top to
   bottom, as one PNG. This is the reliable way to capture a long web page. Things to know: it fetches
   the page over the network; it does not share your browser's logins, so pages behind a sign-in show
-  the sign-in page; it keeps no cookies, cache or history; and pages taller than 30,000 points are
-  cut off there.
+  the sign-in page, and cookie banners appear as they would on a first visit; it keeps no cookies,
+  cache or history; and pages taller than 30,000 points are cut off there. Before capturing it walks
+  down the page and waits for images, so pages that load pictures as you scroll come out complete;
+  this takes a few seconds on long pages.
 - **Scrolling capture**: for long content that is not a web page. Drag over the part of a window that scrolls, scroll down, then press the
   hotkey again or click the menu bar icon. The frames are stitched into one tall PNG. A counter at
   the top of the screen shows the height captured so far, so you can see it keeping up. Scrolling

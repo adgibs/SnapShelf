@@ -1,5 +1,8 @@
 import AppKit
 import WebKit
+import os
+
+private let webLog = Logger(subsystem: "app.snapshelf.SnapShelf", category: "web")
 
 public enum WebCaptureError: LocalizedError {
     case loadFailed(String)
@@ -44,6 +47,18 @@ public final class WebPageCapturer: NSObject, WKNavigationDelegate {
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = webView
+        // Pages only load their images once they believe they are being looked at, so the window has to be
+        // genuinely on screen. It is shown all but transparent, ignores the mouse, and stays out of captures.
+        window.alphaValue = 0.01
+        window.ignoresMouseEvents = true
+        window.hasShadow = false
+        window.level = .floating
+        window.sharingType = .none
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        if let screen = NSScreen.main {
+            window.setFrameTopLeftPoint(CGPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.maxY))
+        }
+        window.orderFrontRegardless()
         self.webView = webView
         self.window = window
         defer {
@@ -68,6 +83,20 @@ public final class WebPageCapturer: NSObject, WKNavigationDelegate {
         // The height is measured twice because pages often grow once their lower parts become visible.
         try await Task.sleep(nanoseconds: 800_000_000)
         var height = try await pageHeight(webView)
+
+        // Walk down the page the way a reader would, so content that loads on scroll gets asked for.
+        _ = try? await webView.evaluateJavaScript("document.querySelectorAll('img[loading=lazy]').forEach(function(i){ i.loading = 'eager'; });")
+        var position: CGFloat = 0
+        var steps = 0
+        while position < height, steps < 60 {
+            position += 700
+            _ = try? await webView.evaluateJavaScript("window.scrollTo(0, \(Int(position))); window.dispatchEvent(new Event('scroll'));")
+            try await Task.sleep(nanoseconds: 120_000_000)
+            steps += 1
+            if steps % 5 == 0 { height = try await pageHeight(webView) }
+        }
+        _ = try? await webView.evaluateJavaScript("window.scrollTo(0, 0); window.dispatchEvent(new Event('scroll'));")
+        height = try await pageHeight(webView)
         for pause in [900_000_000, 500_000_000] as [UInt64] {
             let size = CGSize(width: width, height: height)
             window.setContentSize(size)
@@ -77,6 +106,21 @@ public final class WebPageCapturer: NSObject, WKNavigationDelegate {
             if abs(measured - height) < 2 { break }
             height = measured
         }
+
+        // Give images that were asked for a chance to arrive.
+        let pending = "Array.prototype.filter.call(document.images, function(i){ return !i.complete; }).length"
+        var waited = 0
+        var unloaded = ((try? await webView.evaluateJavaScript(pending)) as? Int) ?? 0
+        while unloaded > 0, waited < 30 {
+            try await Task.sleep(nanoseconds: 200_000_000)
+            waited += 1
+            unloaded = ((try? await webView.evaluateJavaScript(pending)) as? Int) ?? 0
+        }
+        let visibility = ((try? await webView.evaluateJavaScript("document.visibilityState")) as? String) ?? "?"
+        let imageCount = ((try? await webView.evaluateJavaScript("document.images.length")) as? Int) ?? 0
+        webLog.notice("page \(Int(height)) pt, visibility \(visibility, privacy: .public), images \(imageCount), still loading \(unloaded)")
+        _ = try? await webView.evaluateJavaScript("window.scrollTo(0, 0);")
+        try await Task.sleep(nanoseconds: 300_000_000)
 
         // Snapshot in bands: one very tall snapshot can exceed what the renderer will draw.
         let band: CGFloat = 4000

@@ -105,6 +105,7 @@ open class FileDragSourceView: NSView, NSDraggingSource {
     public var onDragEnded: ((Bool) -> Void)?
     public var onDragStarted: (() -> Void)?
     public var onClick: (() -> Void)?
+    public var onDoubleClick: (() -> Void)?
 
     private var mouseDownPoint: NSPoint?
     private var didDrag = false
@@ -132,7 +133,13 @@ open class FileDragSourceView: NSView, NSDraggingSource {
     }
 
     open override func mouseUp(with event: NSEvent) {
-        if !didDrag, mouseDownPoint != nil { onClick?() }
+        if !didDrag, mouseDownPoint != nil {
+            if event.clickCount == 2, let onDoubleClick {
+                onDoubleClick()
+            } else if event.clickCount == 1 {
+                onClick?()
+            }
+        }
         mouseDownPoint = nil
     }
 

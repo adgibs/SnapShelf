@@ -33,6 +33,10 @@ public final class QuickAccessController {
     public var onSave: ((CaptureItem) -> Bool)?
     public var onAnnotate: ((CaptureItem) -> Void)?
     public var onPin: ((CaptureItem) -> Void)?
+    /// Double-click. By default the file opens in its usual app (Preview for images, QuickTime for recordings).
+    public var onOpen: ((CaptureItem) -> Void)? = { item in
+        NSWorkspace.shared.open(item.fileURL)
+    }
 
     private let settings: AppSettings
     private var panel: QuickAccessPanel?
@@ -88,6 +92,7 @@ public final class QuickAccessController {
             self?.dismiss(item.id)
         }
         card.onClose = { [weak self] in self?.dismiss(item.id) }
+        card.onDoubleClick = { [weak self] in self?.onOpen?(item) }
         card.onSwipedAway = { [weak self] in self?.dismiss(item.id, animated: false) }
         card.onDragEnded = { [weak self] accepted in
             if accepted { self?.dismiss(item.id) }
