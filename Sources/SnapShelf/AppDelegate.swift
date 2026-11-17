@@ -99,6 +99,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     coordinator.perform(.area)
                 }
+            case ("capture", "web"):
+                // `?url=https://…` captures that page; without it, the address on the clipboard is used.
+                let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                if let address = query.first(where: { $0.name == "url" })?.value {
+                    coordinator.captureWebPage(from: address)
+                } else {
+                    coordinator.perform(.webPage)
+                }
             case ("capture", "window"):
                 // `?id=<window number>` captures that window directly, with no picker.
                 let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []

@@ -35,6 +35,10 @@ final class CaptureCoordinator {
             reopenLast()
             return
         }
+        if action == .webPage {
+            captureWebPage(from: NSPasteboard.general.string(forType: .string) ?? "")
+            return
+        }
         if action == .record || action == .scrollCapture {
             toggleSession(action)
             return
@@ -89,8 +93,31 @@ final class CaptureCoordinator {
                 guard let self, case let .area(displayID, rect)? = result else { return }
                 self.recognizeText(displayID: displayID, rect: rect)
             }
-        case .reopenLast, .record, .scrollCapture:
+        case .reopenLast, .record, .scrollCapture, .webPage:
             break
+        }
+    }
+
+    /// Captures the whole of a web page, below the fold included, from an address. Uses the network.
+    func captureWebPage(from text: String) {
+        guard !busy, !sessionActive else { return }
+        guard let url = WebAddress.parse(text) else {
+            HUD.toast("Copy the page's address first (⌘L, ⌘C in your browser), then try again.", seconds: 4)
+            return
+        }
+        busy = true
+        HUD.show("Loading \(url.host ?? "page")…")
+        Task {
+            defer { busy = false }
+            do {
+                let captured = try await WebPageCapturer().capture(url: url)
+                HUD.hide()
+                let item = try await deliver(captured.image, scale: captured.scale, mode: "web")
+                log.notice("web page captured \(item.pixelWidth)x\(item.pixelHeight)")
+            } catch {
+                HUD.toast(error.localizedDescription, seconds: 4)
+                log.error("web capture failed: \(String(describing: error), privacy: .public)")
+            }
         }
     }
 

@@ -37,7 +37,12 @@
             </array>
         </dict>
     </array>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoadsInWebContent</key>
+        <true/>
+    </dict>
     <key>NSHumanReadableCopyright</key>
-    <string>Personal build. No network access.</string>
+    <string>Personal build. Uses the network only for Capture Web Page.</string>
 </dict>
 </plist>

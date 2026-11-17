@@ -4,7 +4,8 @@ A macOS menu bar screenshot tool that keeps every capture on screen until you ha
 Captures appear as thumbnails in a screen corner; drag one into any app to drop a real PNG file.
 
 macOS 14 or later. Swift, SwiftUI and AppKit, ScreenCaptureKit for capture. No third-party
-dependencies, no network access, no analytics.
+dependencies, no analytics, no accounts. Captures never leave the Mac. The only network use is
+**Capture Web Page**, which fetches the page you ask it to capture.
 
 ## Build
 
@@ -43,6 +44,7 @@ window comes back instead of a black image.
 | Capture text (OCR to clipboard) | ⌃⇧T |
 | Record screen (press again to stop) | ⌃⇧6 |
 | Scrolling capture (press again to finish) | ⌃⇧7 |
+| Capture web page (address taken from the clipboard) | ⌃⇧8 |
 | Reopen last capture in the overlay | ⌃⇧R |
 
 Change them in Settings (menu bar icon › Settings…). During a selection, Esc or a right-click
@@ -64,9 +66,19 @@ cancels. Pressing the hotkey again also cancels. Return or Space selects the who
 - **Record screen**: drag an area (or press Return for the whole display). The menu bar icon turns
   into a red stop button; click it or press the hotkey again to stop. The recording arrives on the
   shelf and in history as an MP4 or GIF (choose in Settings), ready to drag out. Video only, no audio.
-- **Scrolling capture**: drag over the part of a window that scrolls, scroll down at a steady pace,
-  then press the hotkey again or click the menu bar icon. The frames are stitched into one tall PNG.
-  Scroll downwards only, and keep at least part of the previous view on screen between frames.
+- **Capture web page**: copy a page's address in your browser (⌘L, then ⌘C) and press the hotkey.
+  SnapShelf loads the page in a hidden web view 1280 points wide and captures all of it, top to
+  bottom, as one PNG. This is the reliable way to capture a long web page. Things to know: it fetches
+  the page over the network; it does not share your browser's logins, so pages behind a sign-in show
+  the sign-in page; it keeps no cookies, cache or history; and pages taller than 30,000 points are
+  cut off there.
+- **Scrolling capture**: for long content that is not a web page. Drag over the part of a window that scrolls, scroll down, then press the
+  hotkey again or click the menu bar icon. The frames are stitched into one tall PNG. A counter at
+  the top of the screen shows the height captured so far, so you can see it keeping up. Scrolling
+  back up or bouncing at the end of the page adds nothing; if you flick so far that nothing overlaps,
+  it says it has lost its place, and scrolling back a little lets it pick up again. Leave the scroll
+  bar out of the selection if you can: it is tolerated, but pieces of it end up in the image, as do
+  toolbars fixed to the bottom of the area.
 - **Backgrounds and padding**: in the annotation editor, pick a background to place the capture on a
   gradient with padding, rounded corners and a shadow. The slider beside it sets the padding.
 - **Pin** floats a capture above all windows. Drag to move, drag an edge to resize, scroll or
@@ -88,7 +100,9 @@ saved to the save folder.
 | `~/Library/Preferences/app.snapshelf.SnapShelf.plist` | Settings | A few kilobytes. |
 | Your save folder | Only what you save | Never cleaned up by SnapShelf. |
 
-Nothing else is written: no caches, no logs of its own, no network storage. To remove every trace,
+Nothing else is written by SnapShelf: no logs of its own, and Capture Web Page uses a throwaway web
+data store that leaves no cookies or cache. macOS itself keeps a small text-recognition model cache
+(about 140 KB) in `~/Library/Caches/app.snapshelf.SnapShelf` once Capture Text has been used. To remove every trace,
 quit the app and delete the first and third rows.
 
 ## Automation
@@ -96,7 +110,8 @@ quit the app and delete the first and third rows.
 The app registers a `snapshelf://` URL scheme, handy for scripts and testing:
 
 ```bash
-open -g "snapshelf://capture/area"                      # also window, screen, text, scroll
+open -g "snapshelf://capture/area"                      # also window, screen, text, scroll, web
+open -g "snapshelf://capture/web?url=https://example.com"    # whole-page capture of that address
 open -g "snapshelf://record"                            # start or stop a recording; snapshelf://stop ends any session
 open -g "snapshelf://capture/area?x=100&y=200&w=400&h=300"   # fixed rectangle, main display, points
 open -g "snapshelf://reopen"                            # also settings, annotate, pin
@@ -110,7 +125,7 @@ UI automation tools need in order to see it.
 | Module | Contents |
 | --- | --- |
 | `SnapShelfKit` | Settings, hotkey model, image encoding, file naming, clipboard, file drag source |
-| `SnapShelfCapture` | ScreenCaptureKit capture, area and window selection overlay, permission, OCR, screen recorder, GIF export, scroll stitcher |
+| `SnapShelfCapture` | ScreenCaptureKit capture, area and window selection overlay, permission, OCR, screen recorder, GIF export, scroll stitcher, web page capturer |
 | `SnapShelfOverlay` | Quick access thumbnails, pinned captures |
 | `SnapShelfHistory` | History store and the menu bar list |
 | `SnapShelfSettings` | Settings window, hotkey recorder, launch at login |
@@ -121,12 +136,15 @@ UI automation tools need in order to see it.
 
 Checked on a two-display, non-Retina setup (2 × 2560×1440):
 
-- 34 unit tests pass (image files, file naming, history with its clean-up and expiry, save export,
+- 39 unit tests pass (image files, file naming, history with its clean-up and expiry, save export,
   settings, drag payload, annotation rendering and undo, backgrounds, scroll stitching, recordings).
 - Screen recording in the running app: a 640×400 area recorded for about four seconds gave a valid
   3.9 s MP4, and with the GIF setting a 48-frame GIF.
-- Scrolling capture in the running app: a 240-line TextEdit document scrolled in ten steps stitched
-  into a 740×1884 PNG with every line number in sequence and no frames missed.
+- Scrolling capture in the running app: a 240-line TextEdit document scrolled in steps, with the
+  scroll bar inside the area and one scroll back up, stitched into an 800×1886 PNG with every line
+  number in sequence and none of 104 frames missed.
+- Capture Web Page in the running app: example.com came out at 1280×900 and a Wikipedia article at
+  1280×4486, complete from header to footer with its images, with no visible join where the bands meet.
 - Capture Text in the running app read the menu bar titles correctly.
 - History expiry in the running app: a capture aged ten days was deleted at launch with a 7-day limit.
 - Real area, full-screen and window captures produce valid PNGs at native pixel size.
@@ -149,14 +167,19 @@ Not checked, because it needs hands on the pointer or hardware that was not avai
 - The self-timer, hide desktop icons, launch at login, and JPEG saving in the running app.
 - Recording and scrolling capture started from the hotkey with a hand-drawn selection, and the stop
   button in the menu bar: they were started and stopped through the URL scheme. Scrolling was done
-  in fixed steps, not with a trackpad's smooth scroll.
+  in fixed steps, not with a trackpad's smooth scroll, and not in a browser.
+- **Scrolling capture with a trackpad in a browser does not work reliably**: frames captured while
+  the page is moving are often not placed, and the result stops short. Use Capture Web Page for web
+  pages. It works for stepped scrolling in native apps such as TextEdit.
+- Capture Web Page from the hotkey with a copied address (it was run through the URL scheme), on
+  pages that need a sign-in, and on very long or heavily scripted pages.
 - Choosing a background in the editor window (the rendered output is checked, the control is not).
 - Long recordings, and recordings on Retina displays.
 
 ## Not built
 
 - Audio in recordings, and pausing a recording.
-- Scrolling capture upwards or sideways, and automatic scrolling.
+- Scrolling capture sideways or from the bottom up, and automatic scrolling.
 - Layout-aware hotkey names: key names in Settings assume a US/UK-style layout.
 
 ## Licence

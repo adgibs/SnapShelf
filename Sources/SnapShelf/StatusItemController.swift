@@ -80,7 +80,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             return
         }
         guard let button = statusItem.button else { return }
-        let commands = [HotkeyAction.area, .window, .fullScreen, .scrollCapture, .record, .captureText, .reopenLast].map { action in
+        let commands = [HotkeyAction.area, .window, .fullScreen, .webPage, .scrollCapture, .record, .captureText, .reopenLast].map { action in
             MenuCommand(
                 id: action.rawValue, title: action.title, symbol: action.symbolName,
                 shortcut: settings.hotkeys[action]?.displayString
@@ -99,7 +99,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func run(_ action: HotkeyAction) {
         let previous = previousApp
         popover.performClose(nil)
-        if action == .reopenLast {
+        if action == .reopenLast || action == .webPage {
             perform(action)
             return
         }

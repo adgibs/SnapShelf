@@ -36,8 +36,8 @@ struct PermissionView: View {
                 Text("""
                 macOS treats every screenshot tool as screen recording. SnapShelf uses the access only \
                 when you press a capture hotkey, to read the pixels of the area, window or display you \
-                pick. Nothing is recorded in the background, and nothing leaves this Mac: the app has no \
-                network access.
+                pick. Nothing is recorded in the background, and no capture ever leaves this Mac. The only \
+                network use is Capture Web Page, which fetches the page you ask for.
                 """)
                 .fixedSize(horizontal: false, vertical: true)
 

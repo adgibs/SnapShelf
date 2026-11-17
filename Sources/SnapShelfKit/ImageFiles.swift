@@ -90,6 +90,21 @@ public enum ImageCodec {
     }
 }
 
+/// Reads a web address out of copied text.
+public enum WebAddress {
+    /// An http or https URL, or nil. "example.com/page" is accepted and treated as https.
+    public static func parse(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count < 4000, !trimmed.contains(where: \.isWhitespace) else { return nil }
+        let candidate = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        guard let components = URLComponents(string: candidate),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.host, host.contains("."), !host.hasPrefix("."), !host.hasSuffix("."),
+              let url = components.url else { return nil }
+        return url
+    }
+}
+
 /// Turns the file name pattern into file names.
 public enum FileNamer {
     public static let defaultPattern = "SnapShelf {date} at {time}"

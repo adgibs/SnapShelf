@@ -499,6 +499,62 @@ final class ScrollStitcherTests: XCTestCase {
         XCTAssertEqual(pixels(result), Data(bytes[0..<(1690 * width * 4)]))
     }
 
+    /// What a real app does while scrolling: a scroll bar thumb that moves, and a highlight under the pointer.
+    func testToleratesAScrollBarThumbAndHoverHighlight() throws {
+        let (page, frame) = makePage(width: 480, height: 1600)
+        func withChrome(_ offset: Int, thumbAt thumb: Int, hoverAt hover: Int) -> CGImage {
+            var bytes = [UInt8](pixels(frame(offset, 400)))
+            for y in 0..<400 {
+                for x in 466..<476 where y >= thumb && y < thumb + 220 {   // scroll bar thumb, over half the rows
+                    let i = (y * 480 + x) * 4
+                    bytes[i] = 120; bytes[i + 1] = 120; bytes[i + 2] = 120
+                }
+                for x in 0..<480 where y >= hover && y < hover + 24 {      // hovered row, tinted
+                    let i = (y * 480 + x) * 4
+                    bytes[i] = bytes[i] / 2 + 60
+                }
+            }
+            return CGImage(width: 480, height: 400, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 480 * 4,
+                           space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                           provider: CGDataProvider(data: Data(bytes) as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        }
+        let stitcher = ScrollStitcher()
+        stitcher.add(frame(0, 400))
+        let offsets = [60, 180, 333, 500, 640, 811, 1000, 1200]
+        for (index, offset) in offsets.enumerated() {
+            stitcher.add(withChrome(offset, thumbAt: index * 22, hoverAt: 200))
+        }
+        XCTAssertEqual(stitcher.missedFrames, 0)
+        XCTAssertEqual(stitcher.height, 1600)
+        // Rows are in the right place: compare a column the thumb and highlight never touch.
+        let out = pixels(try XCTUnwrap(stitcher.result())), expected = pixels(page)
+        var wrongRows = 0
+        for y in 0..<1600 where out[(y * 480 + 100) * 4] != expected[(y * 480 + 100) * 4] && !(200..<224).contains((y - 1200 + 400) % 400) { wrongRows += 1 }
+        XCTAssertLessThan(wrongRows, 200, "only the tinted hover rows may differ")
+    }
+
+    func testScrollingBackUpAndBounceAddNothing() throws {
+        let (page, frame) = makePage(width: 240, height: 1200)
+        let stitcher = ScrollStitcher()
+        for offset in [0, 150, 300, 220, 90, 0, 260, 420, 390, 600, 800, 780, 800] { stitcher.add(frame(offset, 400)) }
+        XCTAssertEqual(stitcher.missedFrames, 0)
+        XCTAssertEqual(stitcher.height, 1200)
+        XCTAssertEqual(pixels(try XCTUnwrap(stitcher.result())), pixels(page))
+    }
+
+    func testRecoversAfterAFrameItCouldNotPlace() {
+        let (_, frame) = makePage(width: 240, height: 3000)
+        let stitcher = ScrollStitcher()
+        stitcher.add(frame(0, 400))
+        stitcher.add(frame(200, 400))
+        stitcher.add(frame(1500, 400))   // a flick: no overlap
+        stitcher.add(frame(1600, 400))
+        XCTAssertEqual(stitcher.trailingMisses, 2)
+        stitcher.add(frame(450, 400))    // scrolled back to where it left off
+        XCTAssertEqual(stitcher.trailingMisses, 0)
+        XCTAssertEqual(stitcher.height, 850)
+    }
+
     func testStopsAtTheHeightLimit() {
         let (_, frame) = makePage(width: 240, height: 1000)
         let stitcher = ScrollStitcher(maxHeight: 500)
@@ -525,5 +581,20 @@ final class RecordingFileTests: XCTestCase {
         let saved = try SaveExporter.save(item, to: tempDirectory(), format: .jpeg)
         XCTAssertEqual(saved.lastPathComponent, "Clip.mp4", "the still-image format setting does not apply")
         XCTAssertEqual(try Data(contentsOf: saved), try Data(contentsOf: item.fileURL))
+    }
+}
+
+final class WebAddressTests: XCTestCase {
+    func testAcceptsWebAddresses() {
+        XCTAssertEqual(WebAddress.parse("https://example.com/a?b=1#c")?.absoluteString, "https://example.com/a?b=1#c")
+        XCTAssertEqual(WebAddress.parse("  http://example.com \n")?.absoluteString, "http://example.com")
+        XCTAssertEqual(WebAddress.parse("example.com/page")?.absoluteString, "https://example.com/page")
+    }
+
+    func testRejectsEverythingElse() {
+        for text in ["", "hello world", "just-a-word", "file:///etc/passwd", "ftp://example.com", "javascript:alert(1)",
+                     "snapshelf://capture/area", "https://", "https://localhost", "two lines\nhttps://example.com"] {
+            XCTAssertNil(WebAddress.parse(text), text)
+        }
     }
 }

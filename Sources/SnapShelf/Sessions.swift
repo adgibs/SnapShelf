@@ -128,14 +128,24 @@ extension CaptureCoordinator {
         let stitcher = ScrollStitcher()
         self.stitcher = stitcher
         onSessionChange?("Finish Scrolling Capture")
-        HUD.show("Scroll down slowly. To finish, \(stopHint(.scrollCapture)).")
+        let hint = stopHint(.scrollCapture)
+        HUD.show("Scroll down. To finish, \(hint).")
         scrollTask = Task { [weak self] in
+            var shownHeight = 0
             while !Task.isCancelled {
                 if let captured = try? await ScreenCapturer.captureDisplay(displayID, rect: rect) {
                     self?.scrollScale = captured.scale
                     let image = captured.image
                     // Matching a frame takes a few milliseconds; keep it off the main thread.
                     await Task.detached(priority: .userInitiated) { _ = stitcher.add(image) }.value
+                    // Live feedback: the height grows as new rows are stitched on.
+                    if stitcher.trailingMisses >= 4 {
+                        HUD.show("Lost the place. Scroll back up a little until it catches up.", announce: stitcher.trailingMisses == 4)
+                        shownHeight = 0
+                    } else if stitcher.height != shownHeight {
+                        shownHeight = stitcher.height
+                        HUD.show("Captured \(shownHeight) px. To finish, \(hint).", announce: false)
+                    }
                     if stitcher.isFull { break }
                 }
                 try? await Task.sleep(nanoseconds: 50_000_000)
@@ -160,9 +170,9 @@ extension CaptureCoordinator {
             }
             do {
                 let item = try await deliver(image, scale: scrollScale, mode: "scroll")
-                log.notice("scrolling capture \(item.pixelWidth)x\(item.pixelHeight), missed frames \(stitcher.missedFrames)")
-                if stitcher.missedFrames > 2 {
-                    HUD.toast("Some of the scroll was too fast to stitch. Try scrolling more slowly.", seconds: 4)
+                log.notice("scrolling capture \(item.pixelWidth)x\(item.pixelHeight), placed \(stitcher.placedFrames), missed \(stitcher.missedFrames), trailing \(stitcher.trailingMisses)")
+                if stitcher.trailingMisses > 2 {
+                    HUD.toast("The capture lost its place before the end, so the image stops short.", seconds: 4)
                 }
             } catch {
                 report(error)

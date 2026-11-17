@@ -44,7 +44,7 @@ enum HUD {
         return (p, text)
     }
 
-    private static func present(_ message: String) {
+    private static func present(_ message: String, announce: Bool = true) {
         let (panel, label) = ensurePanel()
         label.stringValue = message
         let width = max(120, label.intrinsicContentSize.width + 36)
@@ -52,15 +52,16 @@ enum HUD {
         panel.setFrame(CGRect(x: screen.midX - width / 2, y: screen.maxY - 90, width: width, height: 40), display: true)
         panel.alphaValue = 1
         panel.orderFrontRegardless()
+        guard announce else { return }
         NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [
             .announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue,
         ])
     }
 
     /// Shows a message until `hide()` or the next toast.
-    static func show(_ message: String) {
+    static func show(_ message: String, announce: Bool = true) {
         hideWork?.cancel()
-        present(message)
+        present(message, announce: announce)
     }
 
     static func hide() {
