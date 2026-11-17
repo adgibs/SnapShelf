@@ -21,13 +21,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissionWindow = PermissionWindowController()
     private let pins = PinController()
     private var editors: [AnnotationEditor] = []
+    /// Captures open in an editor or pinned, which history must not prune.
+    private var inUse: [UUID] = []
     private var subscriptions = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu()
 
+        AnnotationEditor.purgeExports()
         history = HistoryStore()
         quickAccess = QuickAccessController(settings: settings)
+        history.isInUse = { [weak self] id in
+            guard let self else { return false }
+            return self.quickAccess.visibleItems.contains { $0.id == id } || self.inUse.contains(id)
+        }
         coordinator = CaptureCoordinator(
             settings: settings, history: history, quickAccess: quickAccess, permissionWindow: permissionWindow
         )
@@ -120,13 +127,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             },
-            onClose: { [weak self] closed in self?.editors.removeAll { $0 === closed } }
+            onClose: { [weak self] closed in
+                self?.editors.removeAll { $0 === closed }
+                if let index = self?.inUse.firstIndex(of: item.id) { self?.inUse.remove(at: index) }
+            }
         )
         guard let editor else {
             HUD.toast("Could not open that capture")
             return
         }
         editors.append(editor)
+        inUse.append(item.id)
         editor.show()
     }
 

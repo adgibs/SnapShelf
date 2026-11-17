@@ -23,6 +23,9 @@ SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" BUNDLE_ID=com.examp
 
 The script refuses to fall back to ad-hoc signing, because that resets the permission on every build.
 
+The app icon is drawn in code. To change it, edit `Scripts/make-icon.swift` and run
+`swift Scripts/make-icon.swift`, which rewrites `Support/AppIcon.icns`.
+
 ## Granting the permission
 
 On first launch SnapShelf explains why it needs Screen Recording access. Click **Grant Access**
@@ -60,8 +63,20 @@ cancels. Pressing the hotkey again also cancels.
   save folder (default `~/Pictures/SnapShelf`), file name pattern, PNG or JPEG, self-timer, hide
   desktop icons, overlay corner, auto-dismiss, launch at login.
 
-History lives in `~/Library/Application Support/SnapShelf/History`. Dragged files are always PNG at
-native pixel resolution; the PNG/JPEG setting applies to files saved to the save folder.
+Dragged files are always PNG at native pixel resolution; the PNG/JPEG setting applies to files
+saved to the save folder.
+
+## What it stores, and how it is cleaned up
+
+| Location | Contents | Limit |
+| --- | --- | --- |
+| `~/Library/Application Support/SnapShelf/History` | The last 20 captures as PNG, each with a small thumbnail, plus `index.json` | Oldest is deleted as each new capture arrives. A capture still on the shelf or open in the editor is kept until released. Folders the index does not know about are deleted at launch. **Clear** in the menu empties it. |
+| `$TMPDIR/SnapShelf-drag` | The edited image while you drag it out of the annotation editor | One file per open editor, removed when the editor closes or exports again, and the whole folder is emptied at launch. |
+| `~/Library/Preferences/app.snapshelf.SnapShelf.plist` | Settings | A few kilobytes. |
+| Your save folder | Only what you save | Never cleaned up by SnapShelf. |
+
+Nothing else is written: no caches, no logs of its own, no network storage. To remove every trace,
+quit the app and delete the first and third rows.
 
 ## Automation
 
@@ -92,8 +107,8 @@ UI automation tools need in order to see it.
 
 Checked on a two-display, non-Retina setup (2 × 2560×1440):
 
-- 20 unit tests pass (image files, file naming, history, save export, settings, drag payload,
-  annotation rendering and undo).
+- 24 unit tests pass (image files, file naming, history and its clean-up, save export, settings,
+  drag payload, annotation rendering and undo).
 - Real area, full-screen and window captures produce valid PNGs at native pixel size.
 - A fixed-rectangle capture matches the same region of a full-screen capture pixel for pixel
   (0.2% of values differed, from content that changed between the two shots).
@@ -116,5 +131,8 @@ Not checked, because it needs hands on the pointer or hardware that was not avai
 ## Not built
 
 - Phase 3: screen recording to MP4 and GIF, scrolling capture, capture backgrounds and padding.
-- An app icon.
 - Layout-aware hotkey names: key names in Settings assume a US/UK-style layout.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

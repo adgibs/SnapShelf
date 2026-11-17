@@ -104,6 +104,17 @@ public final class AnnotationEditor: NSObject, NSWindowDelegate {
     private let baseName: String
     private let onSave: (CGImage, CGFloat) -> Void
     private let onClose: (AnnotationEditor) -> Void
+    private var lastExportFolder: URL?
+
+    /// Where drag exports are written. Emptied at launch and as each editor moves on.
+    public static var exportDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("SnapShelf-drag", isDirectory: true)
+    }
+
+    /// Removes every leftover drag export. Call once at launch.
+    public static func purgeExports() {
+        try? FileManager.default.removeItem(at: exportDirectory)
+    }
 
     public init?(item: CaptureItem, onSave: @escaping (CGImage, CGFloat) -> Void, onClose: @escaping (AnnotationEditor) -> Void) {
         guard let image = ImageCodec.load(item.fileURL) else { return nil }
@@ -160,7 +171,13 @@ public final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     public func windowWillClose(_ notification: Notification) {
+        removeLastExport()
         onClose(self)
+    }
+
+    private func removeLastExport() {
+        if let folder = lastExportFolder { try? FileManager.default.removeItem(at: folder) }
+        lastExportFolder = nil
     }
 
     private func rendered() -> CGImage? {
@@ -179,9 +196,11 @@ public final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     private func exportToTemporaryFile() -> URL? {
+        // Runs on every press of the drag handle, so the previous export is removed first.
+        removeLastExport()
         guard let image = rendered() else { return nil }
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SnapShelf-drag/\(UUID().uuidString)", isDirectory: true)
+        let folder = AnnotationEditor.exportDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        lastExportFolder = folder
         let url = folder.appendingPathComponent("\(baseName) edited.png")
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

@@ -145,6 +145,66 @@ final class HistoryStoreTests: XCTestCase {
     }
 }
 
+final class HistoryHousekeepingTests: XCTestCase {
+    func testOrphanedFoldersAreRemovedAtLoad() throws {
+        let dir = tempDirectory()
+        let store = HistoryStore(directory: dir)
+        let kept = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "kept")
+        // Files written but never recorded, as after a crash mid-capture.
+        let orphan = try store.write(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "orphan")
+        let unrelated = dir.appendingPathComponent("notes.txt")
+        try Data("x".utf8).write(to: unrelated)
+
+        let reloaded = HistoryStore(directory: dir)
+        XCTAssertEqual(reloaded.items.map(\.id), [kept.id])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.fileURL.deletingLastPathComponent().path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.fileURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path), "only capture folders are swept")
+    }
+
+    func testLostIndexDoesNotLeaveFilesBehind() throws {
+        let dir = tempDirectory()
+        let store = HistoryStore(directory: dir)
+        let item = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "a")
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("index.json"))
+        XCTAssertTrue(HistoryStore(directory: dir).items.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: item.fileURL.path))
+    }
+
+    func testCapturesInUseAreNotPruned() throws {
+        let store = HistoryStore(directory: tempDirectory(), limit: 2)
+        let pinned = try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "pinned")
+        store.isInUse = { $0 == pinned.id }
+        for i in 0..<4 {
+            try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "n\(i)")
+        }
+        XCTAssertEqual(store.items.map(\.baseName), ["n3", "pinned"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pinned.fileURL.path))
+        // Once released it goes at the next capture.
+        store.isInUse = nil
+        try store.add(image: makeImage(width: 10, height: 10), scale: 1, mode: "area", pattern: "n4")
+        XCTAssertEqual(store.items.map(\.baseName), ["n4", "n3"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pinned.fileURL.path))
+    }
+
+    func testHistorySurvivesAMovedFolderAndStaysBounded() throws {
+        let original = tempDirectory()
+        let store = HistoryStore(directory: original, limit: 3)
+        for i in 0..<6 {
+            try store.add(image: makeImage(width: 40, height: 40), scale: 1, mode: "area", pattern: "n\(i)")
+        }
+        // Exactly the limit on disk: three capture folders plus the index.
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: original.path).count, 4)
+        XCTAssertGreaterThan(store.diskUsage, 0)
+
+        let moved = FileManager.default.temporaryDirectory.appendingPathComponent("SnapShelfTests-moved-\(UUID().uuidString)")
+        try FileManager.default.moveItem(at: original, to: moved)
+        let reloaded = HistoryStore(directory: moved, limit: 3)
+        XCTAssertEqual(reloaded.items.map(\.baseName), ["n5", "n4", "n3"])
+        XCTAssertTrue(reloaded.items.allSatisfy { $0.fileURL.path.hasPrefix(moved.path) && FileManager.default.fileExists(atPath: $0.thumbnailURL.path) })
+    }
+}
+
 final class SaveExporterTests: XCTestCase {
     func testSavesPNGAndJPEGWithUniqueNames() throws {
         let store = HistoryStore(directory: tempDirectory())

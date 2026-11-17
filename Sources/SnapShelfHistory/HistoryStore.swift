@@ -10,6 +10,9 @@ public final class HistoryStore: ObservableObject {
 
     public let directory: URL
     public let limit: Int
+    /// Captures that are still on screen (on the shelf, pinned, being annotated). Their files are never
+    /// pruned, so a thumbnail left out for days can still be dragged.
+    public var isInUse: ((UUID) -> Bool)?
     private let fileManager: FileManager
     private var indexURL: URL { directory.appendingPathComponent("index.json") }
 
@@ -59,9 +62,14 @@ public final class HistoryStore: ObservableObject {
     public func insert(_ item: CaptureItem) {
         var updated = items
         updated.insert(item, at: 0)
-        while updated.count > limit {
-            let removed = updated.removeLast()
-            try? fileManager.removeItem(at: folderURL(for: removed))
+        // Drop the oldest captures past the limit, skipping any still in use.
+        var index = updated.count - 1
+        while updated.count > limit, index >= 1 {
+            if isInUse?(updated[index].id) != true {
+                try? fileManager.removeItem(at: folderURL(for: updated[index]))
+                updated.remove(at: index)
+            }
+            index -= 1
         }
         items = updated
         persist()
@@ -91,11 +99,40 @@ public final class HistoryStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: indexURL),
-              let stored = try? JSONDecoder().decode([CaptureItem].self, from: data) else { return }
+        let stored = (try? Data(contentsOf: indexURL)).flatMap { try? JSONDecoder().decode([CaptureItem].self, from: $0) } ?? []
+        // Paths are rebuilt from this directory, so history survives a moved or renamed home folder.
+        let rerooted = stored.map { item -> CaptureItem in
+            let folder = folderURL(for: item)
+            return CaptureItem(
+                id: item.id, date: item.date, mode: item.mode, pixelWidth: item.pixelWidth, pixelHeight: item.pixelHeight,
+                scale: item.scale, fileURL: folder.appendingPathComponent(item.fileURL.lastPathComponent),
+                thumbnailURL: folder.appendingPathComponent(".thumb/thumb.png")
+            )
+        }
         // Entries whose file has gone are dropped.
-        items = Array(stored.filter { fileManager.fileExists(atPath: $0.fileURL.path) }.prefix(limit))
-        if items.count != stored.count { persist() }
+        items = Array(rerooted.filter { fileManager.fileExists(atPath: $0.fileURL.path) }.prefix(limit))
+        if items != stored { persist() }
+        removeOrphans()
+    }
+
+    /// Deletes capture folders the index does not know about: left by a crash between writing the files
+    /// and recording them, by a lost index, or by entries dropped above. Without this they would stay forever.
+    private func removeOrphans() {
+        let known = Set(items.map { $0.id.uuidString })
+        let contents = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for url in contents where UUID(uuidString: url.lastPathComponent) != nil && !known.contains(url.lastPathComponent) {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+
+    /// Bytes used by history on disk.
+    public var diskUsage: Int {
+        guard let walker = fileManager.enumerator(at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total = 0
+        for case let url as URL in walker {
+            total += (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        }
+        return total
     }
 
     private func persist() {

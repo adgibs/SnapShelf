@@ -108,7 +108,6 @@ open class FileDragSourceView: NSView, NSDraggingSource {
     open override func mouseDown(with event: NSEvent) {
         mouseDownPoint = event.locationInWindow
         didDrag = false
-        dragLog.notice("mouse down")
     }
 
     open override func mouseDragged(with event: NSEvent) {
@@ -121,7 +120,7 @@ open class FileDragSourceView: NSView, NSDraggingSource {
         item.setDraggingFrame(bounds, contents: dragImage ?? snapshot())
         let session = beginDraggingSession(with: [item], event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
-        dragLog.notice("drag began: \(url.lastPathComponent, privacy: .public)")
+        dragLog.debug("drag began: \(url.lastPathComponent, privacy: .public)")
         onDragStarted?()
     }
 
@@ -146,7 +145,7 @@ open class FileDragSourceView: NSView, NSDraggingSource {
 
     public func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         mouseDownPoint = nil
-        dragLog.notice("drag ended, operation \(operation.rawValue), accepted \(operation != [])")
+        dragLog.debug("drag ended, operation \(operation.rawValue), accepted \(operation != [])")
         onDragEnded?(operation != [])
     }
 }

@@ -4,10 +4,11 @@ import SnapShelfKit
 /// A capture floating above every window: borderless, resizable from its edges, with adjustable opacity.
 final class PinPanel: NSPanel {
     var onClose: (() -> Void)?
-    private let fileURL: URL
+    /// Held in memory so the pin keeps working after history prunes the file.
+    private let pngData: Data
 
-    init(image: NSImage, pointSize: CGSize, fileURL: URL) {
-        self.fileURL = fileURL
+    init(image: NSImage, pointSize: CGSize, pngData: Data) {
+        self.pngData = pngData
         super.init(
             contentRect: CGRect(origin: .zero, size: pointSize),
             styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false
@@ -50,7 +51,7 @@ final class PinPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
     @objc private func setOpacity(_ sender: NSMenuItem) { alphaValue = CGFloat(sender.tag) / 100 }
-    @objc private func copyImage() { Clipboard.copyImage(at: fileURL) }
+    @objc private func copyImage() { Clipboard.copy(pngData: pngData) }
     @objc private func closePin() { close() }
 
     // Scroll over the pin to change its opacity.
@@ -75,14 +76,14 @@ public final class PinController {
     public init() {}
 
     public func pin(_ item: CaptureItem) {
-        guard let image = NSImage(contentsOf: item.fileURL) else { return }
+        guard let data = try? Data(contentsOf: item.fileURL), let image = NSImage(data: data) else { return }
         let scale = max(item.scale, 1)
         var size = CGSize(width: CGFloat(item.pixelWidth) / scale, height: CGFloat(item.pixelHeight) / scale)
         let screen = NSScreen.underMouse.visibleFrame
         let shrink = min(1, screen.width * 0.6 / size.width, screen.height * 0.6 / size.height)
         size = CGSize(width: size.width * shrink, height: size.height * shrink)
 
-        let panel = PinPanel(image: image, pointSize: size, fileURL: item.fileURL)
+        let panel = PinPanel(image: image, pointSize: size, pngData: data)
         let offset = CGFloat(pins.count % 6) * 24
         panel.setFrameOrigin(CGPoint(x: screen.midX - size.width / 2 + offset, y: screen.midY - size.height / 2 - offset))
         panel.onClose = { [weak self, weak panel] in self?.pins.removeAll { $0 === panel } }
